@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Local config (SDK 경로 등 개인 설정 - 절대 올리면 안 됨)
+local.properties
+
+# IntelliJ / Android Studio 개인 설정
+*.iml
+.idea/workspace.xml
+.idea/caches/
+.idea/libraries/
+.idea/deploymentTargetDropDown.xml
+.idea/migrations.xml
+
+# OS
+.DS_Store
+Thumbs.db
