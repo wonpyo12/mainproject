@@ -1,0 +1,9 @@
+# Gradle 빌드 캐시
+backend/.gradle/
+.gradle/
+
+# 로그 파일
+*.log
+
+# IDE 설정
+**/.idea/inspectionProfiles/
