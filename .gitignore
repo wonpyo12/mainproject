@@ -3,7 +3,7 @@ node_modules/
 /web/node_modules/
 /node-backend/node_modules/
 
-# Build outputs
+# Build outputs & binaries
 /web/dist/
 /web/out/
 /backend/build/
@@ -13,14 +13,26 @@ node_modules/
 build/
 bin/
 out/
+.cxx/
+*.apk
+*.aar
+*.ap_
 
-# Environment variables & secrets (Crucial!)
+
+# Environment variables, secrets & local configs (Crucial!)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 /node-backend/.env
+local.properties
+*.keystore
+*.jks
+
+# Databases
+*.db
+*.sqlite
 
 # IDE / Editor configurations
 .idea/

@@ -1,0 +1,192 @@
+import React, { useState, useEffect } from 'react';
+import { Icon } from './components/Icon';
+import { Avatar } from './components/Avatar';
+import { DashboardView } from './views/DashboardView';
+import { FleetView } from './views/FleetView';
+import { InventoryView } from './views/InventoryView';
+import { AlertsView } from './views/AlertsView';
+import { EmptyView } from './views/EmptyView';
+import { fetchMockData } from './api';
+
+const NAV = [
+  { id: 'dashboard', ko: '대시보드', en: 'Dashboard', icon: 'layout-dashboard' },
+  { id: 'fleet', ko: '로봇 관리', en: 'Fleet', icon: 'bot' },
+  { id: 'inventory', ko: '재고 / RFID', en: 'Inventory', icon: 'package' },
+  { id: 'alerts', ko: '알림', en: 'Alerts', icon: 'bell' },
+];
+
+const NAV2 = [
+  { id: 'map', ko: '매장 지도', en: 'Zones', icon: 'map' },
+  { id: 'members', ko: '회원', en: 'Members', icon: 'users' },
+  { id: 'settings', ko: '설정', en: 'Settings', icon: 'settings' },
+];
+
+const TITLES = {
+  dashboard: ['대시보드', '실시간 매장 운영 현황'],
+  fleet: ['로봇 관리', '추종 카트 플릿 모니터링 · 제어'],
+  inventory: ['재고 / RFID', 'RFID 태그 상품 마스터'],
+  alerts: ['알림', '도난 방지 · 배터리 · 추적 이벤트'],
+  map: ['매장 지도', 'SLAM 맵 · 운영 구역'],
+  members: ['회원', 'QR 인증 사용자'],
+  settings: ['설정', '시스템 환경설정'],
+};
+
+function NavItem({ item, active, onClick, badge }) {
+  return (
+    <button onClick={onClick} className={`nav-item${active ? ' active' : ''}`}>
+      <Icon name={item.icon} size={17} />
+      <span style={{ flex: 1, textAlign: 'left' }}>{item.ko}</span>
+      {badge > 0 && <span className="nav-badge">{badge}</span>}
+    </button>
+  );
+}
+
+export default function App() {
+  const [view, setView] = useState('dashboard');
+  const [selected, setSelected] = useState(null);
+  const [t, st] = useState('00:00');
+
+  const [apiData, setApiData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const tick = () => {
+      const d = new Date();
+      st(d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    fetchMockData()
+      .then(res => {
+        setApiData(res);
+        // Auto-select first robot if available
+        if (res.robots && res.robots.length > 0) {
+          setSelected(res.robots[0].id);
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: 'var(--bg)', color: 'var(--text-2)' }}>
+        <div style={{
+          width: 32, height: 32, border: '3.5px solid var(--border-strong)', borderTopColor: 'var(--text)',
+          borderRadius: 99, animation: 'spin 0.8s linear infinite'
+        }} />
+        <div style={{ fontSize: 13.5, fontWeight: 600 }}>데이터 로딩 중...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 14, background: 'var(--bg)', color: 'var(--red)' }}>
+        <Icon name="octagon-x" size={32} />
+        <div style={{ fontSize: 14, fontWeight: 700 }}>시스템 데이터를 불러오는 데 실패했습니다.</div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>{error}</div>
+        <button onClick={() => window.location.reload()} className="ctl-btn" style={{ width: 'auto', padding: '8px 18px', marginTop: 8 }}>재시도</button>
+      </div>
+    );
+  }
+
+  const data = apiData || {};
+  const robots = data.robots || [];
+  const alerts = data.alerts || [];
+  const sessions = data.sessions || [];
+  const inventory = data.inventory || [];
+  const metrics = data.metrics || {};
+  const storeInfo = data.storeInfo || {};
+  const userInfo = data.userInfo || {};
+  const alertCount = alerts.filter(a => a.level === 'urgent' || a.level === 'warn').length;
+
+  const [tk, tken] = TITLES[view] || ['화면', ''];
+
+  let body;
+  if (view === 'dashboard') {
+    body = <DashboardView selected={selected} setSelected={setSelected} robots={robots} alerts={alerts} sessions={sessions} metrics={metrics} />;
+  } else if (view === 'fleet') {
+    body = <FleetView selected={selected} setSelected={setSelected} robots={robots} />;
+  } else if (view === 'inventory') {
+    body = <InventoryView inventory={inventory} />;
+  } else if (view === 'alerts') {
+    body = <AlertsView alerts={alerts} />;
+  } else {
+    body = <EmptyView title={tk} />;
+  }
+
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark"><Icon name="shopping-cart" size={18} /></div>
+          <div>
+            <div className="brand-name">CartPilot</div>
+            <div className="brand-sub">Robot Console</div>
+          </div>
+        </div>
+
+        {storeInfo.name && (
+          <div className="store-pill">
+            <Icon name="store" size={14} />
+            <span>{storeInfo.name}</span>
+            <Icon name="chevron-down" size={14} style={{ marginLeft: 'auto', color: 'var(--text-3)' }} />
+          </div>
+        )}
+
+        <nav className="nav-group">
+          <div className="nav-label">운영</div>
+          {NAV.map((n) => (
+            <NavItem key={n.id} item={n} active={view === n.id} onClick={() => setView(n.id)} badge={n.id === 'alerts' ? alertCount : 0} />
+          ))}
+        </nav>
+        <nav className="nav-group">
+          <div className="nav-label">관리</div>
+          {NAV2.map((n) => (
+            <NavItem key={n.id} item={n} active={view === n.id} onClick={() => setView(n.id)} />
+          ))}
+        </nav>
+
+      </aside>
+
+      <div className="main">
+        <header className="topbar">
+          <div>
+            <h1 className="page-title">{tk}</h1>
+            <p className="page-sub">{tken}</p>
+          </div>
+          <div className="topbar-right">
+            <div className="search">
+              <Icon name="search" size={15} style={{ color: 'var(--text-3)' }} />
+              <input placeholder="검색" />
+              <span className="kbd">⌘K</span>
+            </div>
+            <div className="clock"><span className="live-dot" />{t}</div>
+            {alertCount > 0 && (
+              <button className="icon-btn">
+                <Icon name="bell" size={17} />
+                <span className="dot-red" />
+              </button>
+            )}
+            {userInfo.name && (
+              <div className="me">
+                <Avatar name={userInfo.name} size={32} />
+              </div>
+            )}
+          </div>
+        </header>
+        <main className="content">{body}</main>
+      </div>
+    </div>
+  );
+}
