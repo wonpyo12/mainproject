@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 백엔드 서버 HTTP 통신 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:allowBackup="true"
         android:label="CartMe"
         android:supportsRtl="true"
-        android:theme="@style/Theme.CartMe">
+        android:theme="@style/Theme.CartMe"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: 로컬 개발 HTTP 허용 (배포 시 HTTPS로 전환) -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
