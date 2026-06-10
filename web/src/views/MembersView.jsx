@@ -264,22 +264,6 @@ export function MembersView() {
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  // Mock 데이터 (백엔드 연결 전 사용)
-  const MOCK_MEMBERS = [
-    { id: 1, name: '김철수', email: 'chulsoo@example.com', phone: '01012345678', user_type: 'GENERAL', created_at: '2025-11-03T09:00:00Z' },
-    { id: 2, name: '이영희', email: 'younghee@example.com', phone: '01098765432', user_type: 'GENERAL', created_at: '2025-11-12T14:30:00Z' },
-    { id: 3, name: '박순자', email: 'soonja@example.com', phone: '01055556666', user_type: 'ELDERLY', created_at: '2025-12-01T08:15:00Z' },
-    { id: 4, name: '최민준', email: 'minjun@example.com', phone: '01033334444', user_type: 'GENERAL', created_at: '2026-01-05T11:00:00Z' },
-    { id: 5, name: '정도영', email: 'doyoung@example.com', phone: '01077778888', user_type: 'GENERAL', created_at: '2026-01-20T16:45:00Z' },
-    { id: 6, name: '오복순', email: 'boksoon@example.com', phone: null, user_type: 'ELDERLY', created_at: '2026-02-07T10:00:00Z' },
-    { id: 7, name: '강지훈', email: 'jihun@example.com', phone: '01011112222', user_type: 'GENERAL', created_at: '2026-02-19T09:30:00Z' },
-    { id: 8, name: '윤서연', email: 'seoyeon@example.com', phone: '01099990000', user_type: 'GENERAL', created_at: '2026-03-04T13:00:00Z' },
-    { id: 9, name: '임성빈', email: 'sungbin@example.com', phone: '01044445555', user_type: 'GENERAL', created_at: '2026-03-22T15:00:00Z' },
-    { id: 10, name: '한명숙', email: 'myungsook@example.com', phone: '01066667777', user_type: 'ELDERLY', created_at: '2026-04-10T08:00:00Z' },
-    { id: 11, name: '조현우', email: 'hyunwoo@example.com', phone: '01022223333', user_type: 'GENERAL', created_at: '2026-05-01T12:00:00Z' },
-    { id: 12, name: '신은지', email: 'eunji@example.com', phone: null, user_type: 'GENERAL', created_at: '2026-05-15T17:30:00Z' },
-  ];
-
   const fetchMembers = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -288,27 +272,16 @@ export function MembersView() {
       if (search) params.set('search', search);
 
       const res = await fetch(`${BACKEND_URL}/api/members?${params}`);
-      if (!res.ok) throw new Error('API 연결 실패');
+      if (!res.ok) throw new Error('회원 정보를 불러오지 못했습니다.');
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
       setMembers(data.data.members);
       setPagination(data.data.pagination);
-    } catch {
-      // 백엔드 미연결 시 Mock 데이터 사용
-      let filtered = MOCK_MEMBERS;
-      if (search) {
-        const q = search.toLowerCase();
-        filtered = filtered.filter(m =>
-          m.name.toLowerCase().includes(q) ||
-          m.email.toLowerCase().includes(q) ||
-          (m.phone || '').includes(q)
-        );
-      }
-      const total = filtered.length;
-      const lim = 10;
-      const from = (page - 1) * lim;
-      setMembers(filtered.slice(from, from + lim));
-      setPagination({ total, page, limit: lim, totalPages: Math.ceil(total / lim) });
+    } catch (err) {
+      console.error('[Members] fetchMembers error:', err);
+      setError(err.message || '백엔드 서버와 통신 중 오류가 발생했습니다.');
+      setMembers([]);
+      setPagination({ total: 0, totalPages: 1 });
     } finally {
       setLoading(false);
     }
@@ -320,21 +293,18 @@ export function MembersView() {
   const handleSearch = (val) => { setSearch(val); setPage(1); };
 
   const handleSave = async (id, form) => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/members/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
-      fetchMembers();
-      if (selectedMember?.id === id) {
-        setSelectedMember(prev => ({ ...prev, ...form }));
-      }
-    } catch {
-      // Mock: 로컬 상태만 업데이트
-      setMembers(ms => ms.map(m => m.id === id ? { ...m, ...form } : m));
-      if (selectedMember?.id === id) setSelectedMember(prev => ({ ...prev, ...form }));
+    const res = await fetch(`${BACKEND_URL}/api/members/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.message || '회원 정보 수정에 실패했습니다.');
+    }
+    fetchMembers();
+    if (selectedMember?.id === id) {
+      setSelectedMember(prev => ({ ...prev, ...form }));
     }
   };
 
@@ -342,11 +312,10 @@ export function MembersView() {
     try {
       const res = await fetch(`${BACKEND_URL}/api/members/${id}`, { method: 'DELETE' });
       if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
-    } catch {
-      // Mock: 로컬 상태에서 제거
-    } finally {
-      setMembers(ms => ms.filter(m => m.id !== id));
+      fetchMembers();
       if (selectedMember?.id === id) setSelectedMember(null);
+    } catch (err) {
+      alert(err.message || '회원 삭제에 실패했습니다.');
     }
   };
 
@@ -354,24 +323,27 @@ export function MembersView() {
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
-        {/* 통계 카드 */}
-        <div style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 12, padding: '18px 20px',
-          display: 'flex', alignItems: 'center', gap: 14,
-          boxShadow: '0 1px 2px rgba(20,22,28,0.04)',
-          width: 'fit-content',
-        }}>
+        {/* 상단 헤더 영역: 통계 카드 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+          {/* 통계 카드 */}
           <div style={{
-            width: 44, height: 44, borderRadius: 10, flex: 'none',
-            background: 'var(--gray-bg)', border: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 12, padding: '18px 20px',
+            display: 'flex', alignItems: 'center', gap: 14,
+            boxShadow: '0 1px 2px rgba(20,22,28,0.04)',
+            width: 'fit-content',
           }}>
-            <Icon name="users" size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>전체 회원</div>
-            <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.03em', marginTop: 2 }}>{pagination.total || MOCK_MEMBERS.length}</div>
+            <div style={{
+              width: 44, height: 44, borderRadius: 10, flex: 'none',
+              background: 'var(--gray-bg)', border: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)',
+            }}>
+              <Icon name="users" size={20} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>전체 회원</div>
+              <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.03em', marginTop: 2 }}>{pagination.total}</div>
+            </div>
           </div>
         </div>
 
