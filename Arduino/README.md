@@ -1,36 +1,10 @@
 # RFID 상품 등록 시스템 (Arduino & Web 연동)
 
-이 디렉토리는 **ESP8266(NodeMCU)** 보드와 **MFRC522 RFID 리더기**를 활용하여 상품의 RFID 태그를 스캔하고, 이를 실시간으로 웹 관리자 화면에 전송하여 상품 등록을 돕는 하드웨어 연동 시스템에 대한 코드와 가이드를 포함합니다.
 
----
 
-## 1. 시스템 아키텍처 & 데이터 흐름
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Admin as 관리자
-    participant HW as Arduino (ESP8266 + MFRC522)
-    participant BE as Node 백엔드 (Express)
-    participant RD as Redis Cache
-    participant FE as Web 프론트엔드 (React)
 
-    Admin->>FE: 상품 등록 모달 열기 (WebSocket 연결)
-    FE->>BE: Socket.io 커넥션 수립 (admin-cartpilot)
-    Admin->>HW: RFID 태그 스캔
-    HW->>BE: POST /api/products/rfid-scan { uid: "A1B2C3D4" } (Wi-Fi)
-    BE->>RD: 임시 저장 (rfid:pending:admin, TTL 30초)
-    BE->>FE: WebSocket 실시간 전송 (rfid:scanned 이벤트)
-    FE->>Admin: RFID 태그 입력 필드 자동 입력 ("A1B2C3D4")
-    Admin->>FE: 상품 정보 입력 후 등록 제출
-    FE->>BE: POST /api/products { rfid_tag, name, price... }
-    BE->>RD: 임시 저장된 pending RFID 삭제 (del)
-    BE-->>FE: 등록 완료 응답
-```
-
----
-
-## 2. 하드웨어 구성 (Pin Mapping)
+## 1. 하드웨어 구성 (Pin Mapping)
 
 ESP8266(NodeMCU) 보드와 MFRC522 RFID 모듈 간의 핀 연결 정보입니다. MFRC522은 반드시 **3.3V**에 연결해야 합니다. (5V에 연결 시 모듈이 손상될 수 있습니다.)
 
@@ -47,7 +21,7 @@ ESP8266(NodeMCU) 보드와 MFRC522 RFID 모듈 간의 핀 연결 정보입니다
 
 ---
 
-## 3. 아두이노 개발 환경 설정
+## 2. 아두이노 개발 환경 설정
 
 ### 라이브러리 설치
 아두이노 IDE를 실행한 뒤 **라이브러리 관리자(Ctrl + Shift + I)**에서 아래 라이브러리들을 검색하여 설치합니다.
@@ -70,7 +44,7 @@ const char* serverURL = "http://(백엔드 서버 IP):3000/api/products/rfid-sca
 
 ---
 
-## 4. 연동 동작 상세 설명
+## 3. 연동 동작 상세 설명
 
 ### ① 아두이노 (하드웨어 측)
 - RFID 태그 감지 시 UID(Unique Identifier)를 읽어와 16진수 대문자 문자열로 변환합니다.
