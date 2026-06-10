@@ -45,8 +45,7 @@ public class CartRedis {
         return raw.entrySet().stream()
                 .collect(Collectors.toMap(
                         e -> Long.parseLong(((String) e.getKey()).replace(FIELD_PREFIX, "")),
-                        e -> Integer.parseInt((String) e.getValue())
-                ));
+                        e -> Integer.parseInt((String) e.getValue())));
     }
 
     public void clearCart(Long userId, Long robotId) {

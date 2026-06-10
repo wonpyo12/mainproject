@@ -6,6 +6,7 @@ import { FleetView } from './views/FleetView';
 import { InventoryView } from './views/InventoryView';
 import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
+import { MembersView } from './views/MembersView';
 import { fetchMockData } from './api';
 
 const NAV = [
@@ -121,6 +122,8 @@ export default function App() {
     body = <InventoryView inventory={inventory} />;
   } else if (view === 'alerts') {
     body = <AlertsView alerts={alerts} />;
+  } else if (view === 'members') {
+    body = <MembersView />;
   } else {
     body = <EmptyView title={tk} />;
   }
