@@ -1,0 +1,278 @@
+package com.example.ui.viewmodel
+
+import android.util.Log
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.network.*
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+enum class Screen {
+    SPLASH, LOGIN, SIGNUP, DASHBOARD, SHOPPING, PAYMENT, COMPLETION
+}
+
+enum class TrackingState {
+    FOLLOWING, PAUSED, LOST_TRACKING, DISCONNECTED
+}
+
+data class CartItem(
+    val id: String,
+    val name: String,
+    val price: Int,
+    val quantity: Int,
+    val imageEmoji: String,
+)
+
+data class CartUiState(
+    val currentScreen: Screen = Screen.SPLASH,
+    // 유저 정보
+    val userId: Int = 0,
+    val userName: String = "",
+    val token: String = "",
+    // 로봇 정보
+    val matchedCartId: String = "",
+    val robotSerialNumber: String = "",
+    val cartBattery: Int = 85,
+    val trackingState: TrackingState = TrackingState.FOLLOWING,
+    // QR
+    val qrToken: String = "",
+    // 쇼핑
+    val shoppingList: List<CartItem> = emptyList(),
+    // UI 상태
+    val isLoading: Boolean = false,
+    val errorMessage: String = "",
+    val latestVoiceGuidance: String = "",
+)
+
+class CartViewModel : ViewModel() {
+
+    private val TAG = "CartViewModel"
+    private val api = RetrofitClient.api
+    private val gson = Gson()
+
+    private val _uiState = MutableStateFlow(CartUiState())
+    val uiState: StateFlow<CartUiState> = _uiState.asStateFlow()
+
+    fun navigateTo(screen: Screen) {
+        _uiState.value = _uiState.value.copy(currentScreen = screen, errorMessage = "")
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [파트 1] 로그인: POST /api/auth/login → JWT 저장
+    // ──────────────────────────────────────────────────────
+    fun login(email: String, password: String) {
+        if (email.isBlank() || password.isBlank()) {
+            _uiState.value = _uiState.value.copy(errorMessage = "이메일과 비밀번호를 입력해 주세요.")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = "")
+            try {
+                val response = api.login(LoginRequest(email, password))
+                if (response.success && response.token != null && response.user != null) {
+                    _uiState.value = _uiState.value.copy(
+                        currentScreen = Screen.DASHBOARD,
+                        token = response.token,
+                        userId = response.user.id,
+                        userName = response.user.name,
+                        isLoading = false,
+                    )
+                    // Socket.io 연결 + 이벤트 리스너 등록
+                    SocketManager.connect(response.token)
+                    setupSocketListeners()
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = response.message,
+                        isLoading = false,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "login error", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "서버에 연결할 수 없습니다. (${e.message})",
+                    isLoading = false,
+                )
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [파트 1] 회원가입: POST /api/auth/register
+    // ──────────────────────────────────────────────────────
+    fun signUp(name: String, phone: String, email: String, password: String) {
+        if (name.isBlank() || email.isBlank() || password.isBlank()) {
+            _uiState.value = _uiState.value.copy(errorMessage = "필수 항목을 모두 입력해 주세요.")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = "")
+            try {
+                val response = api.register(RegisterRequest(email, password, name, phone))
+                if (response.success) {
+                    // 가입 성공 → 자동 로그인
+                    login(email, password)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = response.message,
+                        isLoading = false,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "signUp error", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "서버에 연결할 수 없습니다.",
+                    isLoading = false,
+                )
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [파트 2] QR 생성: GET /api/auth/qr → Redis에 TTL 180초 저장
+    // ──────────────────────────────────────────────────────
+    fun generateQR() {
+        val token = _uiState.value.token
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = "")
+            try {
+                val response = api.generateQR("Bearer $token")
+                _uiState.value = _uiState.value.copy(
+                    qrToken = response.qrToken,
+                    isLoading = false,
+                )
+                showVoice("QR 코드가 생성됐어요. 카트 카메라에 비춰 주세요.")
+            } catch (e: Exception) {
+                Log.e(TAG, "generateQR error", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "QR 생성에 실패했습니다.",
+                    isLoading = false,
+                )
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [파트 2 & 3] Socket.io 이벤트 리스너 등록
+    // ──────────────────────────────────────────────────────
+    private fun setupSocketListeners() {
+        // robot:matched → 로봇 연결 완료, SHOPPING 화면으로 이동
+        SocketManager.on("robot:matched") { args ->
+            val json = args[0].toString()
+            val event = gson.fromJson(json, RobotMatchedEvent::class.java)
+            viewModelScope.launch(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    currentScreen = Screen.SHOPPING,
+                    robotSerialNumber = event.robotSerialNumber,
+                    matchedCartId = event.robotSerialNumber,
+                    trackingState = TrackingState.FOLLOWING,
+                )
+                showVoice("카트와 연결됐어요. 안전하게 따라갈게요.")
+            }
+        }
+
+        // cart:updated → RFID 인식 결과를 실시간으로 장바구니에 반영
+        SocketManager.on("cart:updated") { args ->
+            val json = args[0].toString()
+            val event = gson.fromJson(json, CartUpdatedEvent::class.java)
+            val newList = event.items.map { item ->
+                CartItem(
+                    id = "RF%04d".format(item.productId),
+                    name = item.name,
+                    price = item.price,
+                    quantity = item.qty,
+                    imageEmoji = "🛒",
+                )
+            }
+            viewModelScope.launch(Dispatchers.Main) {
+                val added = newList.size > _uiState.value.shoppingList.size
+                        || newList.any { new ->
+                            val old = _uiState.value.shoppingList.find { it.id == new.id }
+                            old == null || new.quantity > old.quantity
+                        }
+                _uiState.value = _uiState.value.copy(shoppingList = newList)
+                if (added && newList.isNotEmpty()) {
+                    showVoice("${newList.last().name} 이(가) 카트에 담겼어요.")
+                }
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [파트 4] 결제 완료: POST /api/orders/complete
+    //  Redis 장바구니 → MySQL 영구 저장 → 로봇 복귀 명령
+    // ──────────────────────────────────────────────────────
+    fun completeOrder() {
+        val token = _uiState.value.token
+        val robotSerial = _uiState.value.robotSerialNumber
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = "")
+            try {
+                val response = api.completeOrder(
+                    authHeader = "Bearer $token",
+                    request = CompleteOrderRequest(robotSerial),
+                )
+                if (response.success) {
+                    _uiState.value = _uiState.value.copy(
+                        currentScreen = Screen.COMPLETION,
+                        isLoading = false,
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = response.message,
+                        isLoading = false,
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "completeOrder error", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "결제 처리 중 오류가 발생했습니다.",
+                    isLoading = false,
+                )
+            }
+        }
+    }
+
+    fun setTrackingState(state: TrackingState) {
+        _uiState.value = _uiState.value.copy(trackingState = state)
+        val msg = when (state) {
+            TrackingState.FOLLOWING -> "자동 추종을 시작해요."
+            TrackingState.PAUSED    -> "카트가 멈췄어요."
+            else -> ""
+        }
+        if (msg.isNotEmpty()) showVoice(msg)
+    }
+
+    fun removeItem(item: CartItem) {
+        _uiState.value = _uiState.value.copy(
+            shoppingList = _uiState.value.shoppingList.filter { it.id != item.id }
+        )
+    }
+
+    fun formatPrice(price: Int): String = "%,d원".format(price)
+
+    fun logout() {
+        SocketManager.disconnect()
+        _uiState.value = CartUiState()
+        navigateTo(Screen.LOGIN)
+    }
+
+    private fun showVoice(message: String) {
+        _uiState.value = _uiState.value.copy(latestVoiceGuidance = message)
+        viewModelScope.launch {
+            delay(3500)
+            if (_uiState.value.latestVoiceGuidance == message) {
+                _uiState.value = _uiState.value.copy(latestVoiceGuidance = "")
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        SocketManager.disconnect()
+    }
+}

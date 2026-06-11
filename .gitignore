@@ -1,0 +1,57 @@
+# Dependency directories
+node_modules/
+/web/node_modules/
+/node-backend/node_modules/
+
+# Build outputs & binaries
+/web/dist/
+/web/out/
+/backend/build/
+/backend/bin/
+/backend/out/
+.gradle/
+build/
+bin/
+out/
+.cxx/
+*.apk
+*.aar
+*.ap_
+
+
+# Environment variables, secrets & local configs (Crucial!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+/node-backend/.env
+local.properties
+*.keystore
+*.jks
+
+# Databases
+*.db
+*.sqlite
+
+# IDE / Editor configurations
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.class
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
