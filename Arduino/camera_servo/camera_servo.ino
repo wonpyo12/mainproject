@@ -26,7 +26,7 @@ const int servoPin = 26;
 // ── 동작 파라미터 ──────────────────────────────────────────────
 const int  ANGLE_MIN        = 0;
 const int  ANGLE_MAX        = 180;
-const int  ANGLE_CENTER     = 90;
+const int  ANGLE_CENTER     = 75;   // 카메라 정면 각도 (서보 혼 장착 오차 보정, 실측값)
 const unsigned long TRACK_STEP_MS = 15;  // 추적 이동 시 1도당 시간 (작을수록 빠름)
 const unsigned long SWEEP_STEP_MS = 40;  // 탐색 스윕 시 1도당 시간 (천천히 훑어야 인식 가능)
 

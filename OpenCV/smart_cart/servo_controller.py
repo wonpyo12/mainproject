@@ -31,7 +31,7 @@ except ImportError:
 BAUD_RATE        = 115200
 ANGLE_MIN        = 0
 ANGLE_MAX        = 180
-ANGLE_CENTER     = 90
+ANGLE_CENTER     = 75     # 물리적 정면 각도 (서보 혼 장착 오차 보정값 — 실측으로 결정)
 SEND_INTERVAL    = 0.10   # 각도 명령 최소 전송 간격 (초) — 시리얼 폭주 방지
 ANGLE_DEADBAND   = 1      # 목표각 변화가 이 값 이하면 전송 생략
 
@@ -158,16 +158,16 @@ class ServoController:
         self._send("H")
 
     def center(self) -> None:
-        """중앙(90도) 복귀."""
+        """중앙(정면) 복귀 — 펌웨어의 C 대신 보정된 각도를 직접 전송."""
         self._mode = "track"
         self._last_sent_angle = ANGLE_CENTER
-        self._send("C")
+        self._send(f"A{ANGLE_CENTER}")
 
     def close(self) -> None:
         self._stop_flag = True
         if self._ser is not None:
             try:
-                self._send("C")   # 종료 시 중앙 복귀
+                self._send(f"A{ANGLE_CENTER}")   # 종료 시 중앙(정면) 복귀
                 time.sleep(0.1)
                 self._ser.close()
             except Exception:
