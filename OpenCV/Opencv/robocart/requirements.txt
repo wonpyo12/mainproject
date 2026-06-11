@@ -6,7 +6,7 @@ opencv-python>=4.8.0
 mediapipe>=0.10.0
 numpy>=1.24.0
 
-# ── 신규 (smart_cart_main.py) ─────────────────────────────────────────────
+# ── 신규 (robocart_main.py) ─────────────────────────────────────────────
 # YOLO (자동으로 torch 의존성 포함)
 ultralytics>=8.0.0
 

@@ -15,9 +15,9 @@ SmartCart 등록 사용자 실시간 인식 시스템 (단일 실행 파일)
   4. 위치 연속성   10%  — 이전 프레임 bbox 중심 거리
 
 실행 방법:
-  python smart_cart_main.py            # 기존 등록 데이터로 추종
-  python smart_cart_main.py --register # 새로 등록 후 추종
-  python smart_cart_main.py --reset    # 기존 데이터 삭제 후 재등록
+  python robocart_main.py            # 기존 등록 데이터로 추종
+  python robocart_main.py --register # 새로 등록 후 추종
+  python robocart_main.py --reset    # 기존 데이터 삭제 후 재등록
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def put_texts(frame: np.ndarray, items: list) -> None:
 
 DATA_DIR     = Path(__file__).resolve().parent / "data"
 SAMPLES_DIR  = DATA_DIR / "samples"
-PROFILE_PATH = DATA_DIR / "smart_cart_profile.json"
+PROFILE_PATH = DATA_DIR / "robocart_profile.json"
 
 _MODEL_NAME       = "pose_landmarker_lite.task"
 _MODEL_SRC        = DATA_DIR / _MODEL_NAME
