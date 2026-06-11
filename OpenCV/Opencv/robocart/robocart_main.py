@@ -35,6 +35,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import serial as _serial
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -144,6 +146,25 @@ COLOR_FLOOR        = 0.35   # 색상 최소 하한 (옷 색상이 전혀 안 맞
 MIN_CONFIRM_FRAMES = 3      # 추종 시작 전 연속 매칭 프레임 수
 
 _PoseLM = PoseLandmark
+
+# ── ESP32 시리얼 ──────────────────────────────────────────────────────────────
+ESP32_PORT = "COM5"   # 장치관리자에서 확인 후 변경
+ESP32_BAUD = 9600
+
+_esp: _serial.Serial | None = None
+try:
+    _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
+    print(f"[ESP32] 연결됨: {ESP32_PORT}")
+except Exception:
+    print(f"[ESP32] 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
+
+
+def _esp_send(cmd: str) -> None:
+    if _esp and _esp.is_open:
+        try:
+            _esp.write((cmd + "\n").encode())
+        except Exception:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -599,6 +620,7 @@ class TrackingState:
         self._history: collections.deque = collections.deque(maxlen=SCORE_WINDOW)
         self._confirm_count = 0   # 연속 임계값 초과 프레임 수
         self.status = "searching"
+        self._scanning = False
 
     @property
     def avg_score(self) -> float:
@@ -606,6 +628,10 @@ class TrackingState:
 
     def update(self, matched: bool, bbox=None, score: float = 0.0) -> None:
         if matched and bbox is not None:
+            if self._scanning:
+                self._scanning = False
+                _esp_send("SCAN_STOP")
+                _esp_send("CENTER")
             self._history.append(score)
             self.last_bbox = bbox
             self.lost_count = 0
@@ -638,6 +664,9 @@ class TrackingState:
                     self.last_bbox = None
                     self._history.clear()
                     self.status = "searching"
+                    if not self._scanning:
+                        self._scanning = True
+                        _esp_send("SCAN_START")
                 else:
                     self.status = f"lost({self.lost_count}/{LOST_MAX})"
             else:
