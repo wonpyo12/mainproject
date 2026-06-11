@@ -15,11 +15,11 @@ public class RobotStatusRedis {
     private static final String KEY_PREFIX = "robot:status:";
 
     public static final String FIELD_CURRENT_USER_ID = "current_user_id";
-    public static final String FIELD_STATUS          = "status";
-    public static final String FIELD_POS_X           = "pos_x";
-    public static final String FIELD_POS_Y           = "pos_y";
-    public static final String FIELD_BATTERY         = "battery";
-    public static final String FIELD_LAST_PING       = "last_ping";
+    public static final String FIELD_STATUS = "status";
+    public static final String FIELD_POS_X = "pos_x";
+    public static final String FIELD_POS_Y = "pos_y";
+    public static final String FIELD_BATTERY = "battery";
+    public static final String FIELD_LAST_PING = "last_ping";
 
     private final RedisTemplate<String, String> redisTemplate;
 
@@ -40,12 +40,12 @@ public class RobotStatusRedis {
 
     public Optional<Map<String, String>> getStatus(Long robotId) {
         Map<Object, Object> raw = redisTemplate.opsForHash().entries(key(robotId));
-        if (raw.isEmpty()) return Optional.empty();
+        if (raw.isEmpty())
+            return Optional.empty();
         Map<String, String> result = raw.entrySet().stream()
                 .collect(Collectors.toMap(
                         e -> (String) e.getKey(),
-                        e -> (String) e.getValue()
-                ));
+                        e -> (String) e.getValue()));
         return Optional.of(result);
     }
 
