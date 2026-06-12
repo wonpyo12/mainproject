@@ -139,11 +139,16 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     onSubmit = { n, p, email, pw -> viewModel.signUp(n, p, email, pw) },
                     onBack = { viewModel.navigateTo(Screen.LOGIN) }
                 )
-                Screen.DASHBOARD -> PairScreen(
-                    uiState = uiState,
-                    onGenerateQR = { viewModel.generateQR() },
-                    onLogout = { viewModel.logout() }
-                )
+                Screen.DASHBOARD -> {
+                    LaunchedEffect(Unit) {
+                        viewModel.generateQR()
+                    }
+                    PairScreen(
+                        uiState = uiState,
+                        onGenerateQR = { viewModel.generateQR() },
+                        onLogout = { viewModel.logout() }
+                    )
+                }
                 Screen.SHOPPING -> ShoppingScreen(
                     uiState = uiState,
                     viewModel = viewModel,
@@ -479,7 +484,43 @@ private fun PairScreen(
             }
 
             if (uiState.qrToken.isNotBlank()) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
+                
+                // 3분(180초) 타이머 상태 관리 및 LaunchedEffect 구현
+                var timeLeft by remember(uiState.qrToken) { mutableStateOf(180) }
+                LaunchedEffect(uiState.qrToken) {
+                    timeLeft = 180
+                    while (timeLeft > 0) {
+                        delay(1000L)
+                        timeLeft--
+                    }
+                }
+                
+                val minutes = timeLeft / 60
+                val seconds = timeLeft % 60
+                val timeString = "%02d:%02d".format(minutes, seconds)
+                val isTimeExpired = timeLeft == 0
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Timer,
+                        contentDescription = "Timer",
+                        tint = if (isTimeExpired) Danger else Point,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (isTimeExpired) "시간 만료 (재발급 필요)" else "남은 시간: $timeString",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isTimeExpired) Danger else Point
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
                 Text("3분 내에 스캔해 주세요 · 스캔 시 자동 이동",
                     fontSize = 11.sp, color = Faint, textAlign = TextAlign.Center)
             }
@@ -499,10 +540,10 @@ private fun PairScreen(
 
         Spacer(Modifier.weight(1f))
         PrimaryButton(
-            text = if (uiState.isLoading) "생성 중..." else "QR 코드 생성",
+            text = if (uiState.isLoading) "재발급 중..." else "QR 코드 재발급",
             enabled = !uiState.isLoading,
             onClick = onGenerateQR,
-            leadingIcon = Icons.Filled.QrCodeScanner
+            leadingIcon = Icons.Filled.Refresh
         )
         Spacer(Modifier.height(20.dp))
     }

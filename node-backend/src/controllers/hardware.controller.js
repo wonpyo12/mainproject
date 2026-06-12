@@ -32,7 +32,7 @@ const qrScan = async (req, res) => {
 
     // [Redis] 로봇 상태 캐시: robot:status:{serialNumber} = { userId, status, startedAt }
     const robotStatusKey = `robot:status:${robotSerialNumber}`;
-    await redis.hset(robotStatusKey, {
+    await redis.hmset(robotStatusKey, {
       userId,
       status:    'SHOPPING',
       startedAt: new Date().toISOString(),
@@ -98,7 +98,7 @@ const rfidScan = async (req, res) => {
     const existingQty = await redis.hget(cartKey, `${product.id}_qty`);
     const newQty = existingQty ? parseInt(existingQty, 10) + 1 : 1;
 
-    await redis.hset(cartKey, {
+    await redis.hmset(cartKey, {
       [`${product.id}_name`]:  product.name,
       [`${product.id}_price`]: String(product.price),
       [`${product.id}_qty`]:   String(newQty),
