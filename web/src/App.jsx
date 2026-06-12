@@ -8,6 +8,10 @@ import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
 import { MembersView } from './views/MembersView';
 import { fetchMockData } from './api';
+import { io } from 'socket.io-client';
+
+const BACKEND_URL = 'http://localhost:3000';
+
 
 const NAV = [
   { id: 'dashboard', ko: '대시보드', en: 'Dashboard', icon: 'layout-dashboard' },
@@ -48,8 +52,16 @@ export default function App() {
   const [t, st] = useState('00:00');
 
   const [apiData, setApiData] = useState(null);
+  const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // 경과 시간 계산 헬퍼 함수
+  const calculateMinutesAgo = (isoString) => {
+    if (!isoString) return 0;
+    const diffMs = new Date() - new Date(isoString);
+    return Math.max(0, Math.floor(diffMs / 60000));
+  };
 
   useEffect(() => {
     const tick = () => {
@@ -65,6 +77,17 @@ export default function App() {
     fetchMockData()
       .then(res => {
         setApiData(res);
+        
+        // localStorage에서 기존 로그인 알림 복구 및 경과 시간 갱신
+        const saved = localStorage.getItem('cartpilot_login_alerts');
+        const customAlerts = saved ? JSON.parse(saved) : [];
+        const updatedCustomAlerts = customAlerts.map(a => ({
+          ...a,
+          mins: calculateMinutesAgo(a.timestamp)
+        }));
+
+        setAlerts([...updatedCustomAlerts, ...(res.alerts || [])]);
+        
         // Auto-select first robot if available
         if (res.robots && res.robots.length > 0) {
           setSelected(res.robots[0].id);
@@ -76,6 +99,42 @@ export default function App() {
         setError(err.message);
         setLoading(false);
       });
+  }, []);
+
+  useEffect(() => {
+    const socket = io(BACKEND_URL, {
+      auth: { token: 'admin-cartpilot' },
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      console.log('[Socket] Global Web Admin connected');
+    });
+
+    socket.on('user:login', (data) => {
+      console.log('[Socket] user:login received:', data);
+      
+      const newAlert = {
+        level: 'info',
+        cart: 'SYSTEM',
+        ko: `${data.userName} 님이 로그인했습니다.`,
+        mins: 0,
+        timestamp: data.timestamp || new Date().toISOString()
+      };
+
+      setAlerts((prev) => {
+        const nextAlerts = [newAlert, ...prev];
+        // localStorage에 새 로그인 알림 저장
+        const saved = localStorage.getItem('cartpilot_login_alerts');
+        const customAlerts = saved ? JSON.parse(saved) : [];
+        localStorage.setItem('cartpilot_login_alerts', JSON.stringify([newAlert, ...customAlerts]));
+        return nextAlerts;
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, []);
 
   if (loading) {
@@ -103,7 +162,6 @@ export default function App() {
 
   const data = apiData || {};
   const robots = data.robots || [];
-  const alerts = data.alerts || [];
   const sessions = data.sessions || [];
   const inventory = data.inventory || [];
   const metrics = data.metrics || {};

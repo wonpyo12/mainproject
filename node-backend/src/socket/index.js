@@ -5,6 +5,7 @@
 //                  (상품 등록 시 RFID 태그 실시간 수신)
 // ===================================================================
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db'); // [MySQL]
 
 function initSocket(io) {
   // 소켓 연결 인증 미들웨어
@@ -44,6 +45,24 @@ function initSocket(io) {
       const userId = socket.user.userId;
       console.log(`[Socket] User ${userId} connected (socketId: ${socket.id})`);
       socket.join(`user:${userId}`);
+
+      // DB에서 유저 이름 조회하여 관리자에게 로그인 알림 전송
+      pool.query('SELECT name FROM users WHERE id = ?', [userId])
+        .then(([rows]) => {
+          if (rows && rows.length > 0) {
+            const userName = rows[0].name;
+            // room:admin에 있는 관리자들에게 알림 전송
+            io.to('room:admin').emit('user:login', {
+              userId,
+              userName,
+              timestamp: new Date().toISOString(),
+            });
+            console.log(`[Socket] Sent login notification for ${userName} to admin room`);
+          }
+        })
+        .catch(err => {
+          console.error('[Socket] Error fetching user name for login notification:', err);
+        });
 
       socket.on('disconnect', (reason) => {
         console.log(`[Socket] User ${userId} disconnected (${reason})`);
