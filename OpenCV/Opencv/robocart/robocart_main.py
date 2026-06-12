@@ -15,9 +15,9 @@ SmartCart 등록 사용자 실시간 인식 시스템 (단일 실행 파일)
   4. 위치 연속성   10%  — 이전 프레임 bbox 중심 거리
 
 실행 방법:
-  python smart_cart_main.py            # 기존 등록 데이터로 추종
-  python smart_cart_main.py --register # 새로 등록 후 추종
-  python smart_cart_main.py --reset    # 기존 데이터 삭제 후 재등록
+  python robocart_main.py            # 기존 등록 데이터로 추종
+  python robocart_main.py --register # 새로 등록 후 추종
+  python robocart_main.py --reset    # 기존 데이터 삭제 후 재등록
 """
 
 from __future__ import annotations
@@ -35,39 +35,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import serial as _serial
+
 import cv2
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
-try:
-    # mediapipe <= 0.10.x legacy 경로
-    from mediapipe.python.solutions.pose import PoseLandmark   # enum: NOSE, LEFT_SHOULDER …
-except ImportError:
-    # mediapipe 0.10.30+ 에서 legacy solutions 제거됨 → 동일 인덱스 자체 정의
-    # (tasks API PoseLandmarker도 같은 33개 랜드마크 인덱스를 사용)
-    from enum import IntEnum
-
-    class PoseLandmark(IntEnum):
-        NOSE           = 0
-        LEFT_EYE       = 2
-        RIGHT_EYE      = 5
-        LEFT_EAR       = 7
-        RIGHT_EAR      = 8
-        LEFT_SHOULDER  = 11
-        RIGHT_SHOULDER = 12
-        LEFT_ELBOW     = 13
-        RIGHT_ELBOW    = 14
-        LEFT_WRIST     = 15
-        RIGHT_WRIST    = 16
-        LEFT_HIP       = 23
-        RIGHT_HIP      = 24
-        LEFT_KNEE      = 25
-        RIGHT_KNEE     = 26
-        LEFT_ANKLE     = 27
-        RIGHT_ANKLE    = 28
-
-from servo_controller import ServoController
+from mediapipe.python.solutions.pose import PoseLandmark   # enum: NOSE, LEFT_SHOULDER …
 
 # ── YOLO ─────────────────────────────────────────────────────────────────────
 try:
@@ -144,7 +119,7 @@ def put_texts(frame: np.ndarray, items: list) -> None:
 
 DATA_DIR     = Path(__file__).resolve().parent / "data"
 SAMPLES_DIR  = DATA_DIR / "samples"
-PROFILE_PATH = DATA_DIR / "smart_cart_profile.json"
+PROFILE_PATH = DATA_DIR / "robocart_profile.json"
 
 _MODEL_NAME       = "pose_landmarker_lite.task"
 _MODEL_SRC        = DATA_DIR / _MODEL_NAME
@@ -170,14 +145,26 @@ REID_FLOOR         = 0.50   # ReID 최소 하한 (이 미만이면 무조건 비
 COLOR_FLOOR        = 0.35   # 색상 최소 하한 (옷 색상이 전혀 안 맞으면 거부)
 MIN_CONFIRM_FRAMES = 3      # 추종 시작 전 연속 매칭 프레임 수
 
-# ── 서보 (카메라 팬) ──────────────────────────────────────────────────────────
-SERVO_HFOV_DEG   = 60.0   # 카메라 수평 화각 (대략값, 실측 후 조정)
-SERVO_GAIN       = 0.5    # P제어 게인 — 클수록 빠르게 따라가지만 오버슈트 위험
-SERVO_DIRECTION  = 1      # 사용자가 화면 오른쪽일 때 서보 각도가 증가해야 하면 1, 반대면 -1
-SERVO_DEAD_ZONE  = 40     # 화면 중앙 ±N px 이내면 서보 정지 (떨림 방지)
-SEARCH_GRACE_SEC = 2.0    # searching 상태가 이 시간 이상 지속되면 탐색 스윕 시작
-
 _PoseLM = PoseLandmark
+
+# ── ESP32 시리얼 ──────────────────────────────────────────────────────────────
+ESP32_PORT = "COM5"   # 장치관리자에서 확인 후 변경
+ESP32_BAUD = 9600
+
+_esp: _serial.Serial | None = None
+try:
+    _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
+    print(f"[ESP32] 연결됨: {ESP32_PORT}")
+except Exception:
+    print(f"[ESP32] 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
+
+
+def _esp_send(cmd: str) -> None:
+    if _esp and _esp.is_open:
+        try:
+            _esp.write((cmd + "\n").encode())
+        except Exception:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -633,6 +620,7 @@ class TrackingState:
         self._history: collections.deque = collections.deque(maxlen=SCORE_WINDOW)
         self._confirm_count = 0   # 연속 임계값 초과 프레임 수
         self.status = "searching"
+        self._scanning = False
 
     @property
     def avg_score(self) -> float:
@@ -640,6 +628,10 @@ class TrackingState:
 
     def update(self, matched: bool, bbox=None, score: float = 0.0) -> None:
         if matched and bbox is not None:
+            if self._scanning:
+                self._scanning = False
+                _esp_send("SCAN_STOP")
+                _esp_send("CENTER")
             self._history.append(score)
             self.last_bbox = bbox
             self.lost_count = 0
@@ -672,6 +664,9 @@ class TrackingState:
                     self.last_bbox = None
                     self._history.clear()
                     self.status = "searching"
+                    if not self._scanning:
+                        self._scanning = True
+                        _esp_send("SCAN_START")
                 else:
                     self.status = f"lost({self.lost_count}/{LOST_MAX})"
             else:
@@ -1162,8 +1157,7 @@ class DetectionWorker(threading.Thread):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
-                 reid_model, profile: dict, panel_width: int = 240,
-                 servo: ServoController | None = None) -> None:
+                 reid_model, profile: dict, panel_width: int = 240) -> None:
     cap = open_camera()
     if cap is None:
         print("[오류] 카메라를 열 수 없습니다.")
@@ -1175,7 +1169,6 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
     cur_scores: dict | None = None
     cur_ori    = "unknown"
     phases     = profile.get("phases", {})
-    search_since: float | None = None   # searching 상태 진입 시각
 
     print("=== 실시간 추종 ===  ESC: 종료\n")
 
@@ -1240,31 +1233,6 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
                     cv2.putText(frame, tracker.status, (x1, max(18, y1-8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 140, 255), 2)
 
-            # ── 서보 제어 ────────────────────────────────────────────────────
-            # matched      → 사용자를 화면 중앙에 유지 (P제어)
-            # lost(n/20)   → 잠깐 가려진 것일 수 있으니 그 자리에서 대기
-            # searching    → 유예 시간 경과 후 탐색 스윕 시작
-            if servo is not None:
-                if matched:
-                    search_since = None
-                    if servo.mode == "sweep":
-                        servo.hold()   # 탐색 중 발견 → 즉시 정지
-                    cx = (best_bbox[0] + best_bbox[2]) / 2
-                    err_px = cx - w_f / 2
-                    if abs(err_px) > SERVO_DEAD_ZONE:
-                        err_deg = err_px / w_f * SERVO_HFOV_DEG
-                        servo.move_to(servo.current_angle
-                                      + SERVO_DIRECTION * SERVO_GAIN * err_deg)
-                elif tracker.status.startswith("lost"):
-                    search_since = None
-                    servo.hold()
-                else:   # searching
-                    now_t = time.time()
-                    if search_since is None:
-                        search_since = now_t
-                    elif now_t - search_since >= SEARCH_GRACE_SEC:
-                        servo.start_sweep()
-
             # 비등록자 박스 (회색) — 등록자 박스와 중복 방지
             for bbox in bboxes:
                 if bbox == best_bbox and matched:
@@ -1278,10 +1246,8 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             # HUD
             hud_c = (0, 255, 0) if tracker.is_tracking else (100, 100, 200)
             cv2.rectangle(frame, (0, 0), (panel_x, 34), (0, 0, 0), -1)
-            servo_info = (f"  Servo:{servo.current_angle} {servo.mode}"
-                          if servo is not None and servo.connected else "")
             cv2.putText(frame,
-                        f"FPS:{fps:.0f}  Cand:{len(bboxes)}  {tracker.status.upper()}{servo_info}",
+                        f"FPS:{fps:.0f}  Cand:{len(bboxes)}  {tracker.status.upper()}",
                         (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.56, hud_c, 2)
             put_texts(frame, [((8, 36), "ESC: 종료", 14, (160, 160, 160))])
 
@@ -1307,9 +1273,6 @@ def parse_args():
     p.add_argument("--reset",    action="store_true", help="기존 데이터 삭제 후 재등록")
     p.add_argument("--camera",   type=int, default=0, help="카메라 인덱스 (기본값: 0)")
     p.add_argument("--user-id",  default="owner_001",  help="등록 사용자 ID")
-    p.add_argument("--serial-port", default=None,
-                   help="ESP32 시리얼 포트 (예: COM3). 생략 시 자동 탐지")
-    p.add_argument("--no-servo", action="store_true", help="서보 제어 비활성화")
     return p.parse_args()
 
 
@@ -1383,14 +1346,8 @@ def main() -> int:
     print(f"사용자 [{profile['user_id']}] 로드 완료")
     print(f"등록 일시: {profile.get('registered_at', 'N/A')}\n")
 
-    # ── 서보 연결 (ESP32 + MG996R) ───────────────────────────────────────────
-    servo = ServoController(port=args.serial_port, enabled=not args.no_servo)
-
     # ── 실시간 추종 ───────────────────────────────────────────────────────────
-    try:
-        run_tracking(yolo, hog_fallback, pose, reid_model, profile, servo=servo)
-    finally:
-        servo.close()
+    run_tracking(yolo, hog_fallback, pose, reid_model, profile)
 
     pose.close()
     return 0

@@ -1,9 +1,8 @@
 venv/
-.venv/
 __pycache__/
 *.pt
 *.pyc
 data/registered_user.json
-data/smart_cart_profile.json
+data/robocart_profile.json
 data/samples/
 kr_text_test.png
