@@ -316,7 +316,7 @@ private fun SplashScreen(onDone: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.scale(s)) { BrandMark(84) }
             Spacer(Modifier.height(22.dp))
-            Text("CartMe", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Ink, letterSpacing = (-0.6).sp)
+            Text("RoboCart", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Ink, letterSpacing = (-0.6).sp)
             Spacer(Modifier.height(6.dp))
             Text("나를 따라오는 스마트 쇼핑카트", fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = Sub)
         }
@@ -344,7 +344,7 @@ private fun LoginScreen(
         Text("다시 만나서\n반가워요", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Ink,
             lineHeight = 32.sp, letterSpacing = (-0.6).sp)
         Spacer(Modifier.height(10.dp))
-        Text("카트미 계정으로 로그인하세요", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Sub)
+        Text("로보카트 계정으로 로그인하세요", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Sub)
         Spacer(Modifier.height(28.dp))
 
         AppField("이메일", email, { email = it }, Icons.Filled.Email, keyboardType = KeyboardType.Email)
@@ -595,7 +595,7 @@ private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PulsingDot(tone)
                 Spacer(Modifier.width(4.dp))
-                Text(uiState.matchedCartId.ifBlank { "CartMe" }, fontSize = 14.sp,
+                Text(uiState.matchedCartId.ifBlank { "RoboCart" }, fontSize = 14.sp,
                     fontWeight = FontWeight.ExtraBold, color = Ink)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {

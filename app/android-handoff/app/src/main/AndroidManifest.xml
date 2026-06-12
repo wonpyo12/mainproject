@@ -7,7 +7,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="CartMe"
+        android:label="RoboCart"
         android:supportsRtl="true"
         android:theme="@style/Theme.CartMe"
         android:usesCleartextTraffic="true">
