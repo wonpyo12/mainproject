@@ -934,7 +934,24 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
 
                 best_box = _best_person(frame)
 
+                # ── 방향 검증: 해당 단계 방향(front/back)과 일치할 때만 촬영 ──
+                # (뒷모습이 front 로 잘못 등록되던 문제 방지)
+                cur_dir = None
+                dir_ok = False
                 if best_box is not None:
+                    pose_live = run_pose(frame, pose)
+                    pidx_live = match_pose_idx(pose_live, best_box, frame.shape)
+                    if pidx_live is not None:
+                        cur_dir = infer_orientation(pose_live.pose_landmarks[pidx_live])
+                    # front: 정면이 확실할 때만 (정면 인식은 신뢰도 높음)
+                    # back : 정면만 아니면 인정 — 뒤에선 포즈/방향 인식이 약해
+                    #        back 으로 안 잡히는 경우가 많으므로 'front 가 아님'으로 완화
+                    if sname == "front":
+                        dir_ok = (cur_dir == "front")
+                    else:
+                        dir_ok = (cur_dir != "front")
+
+                if best_box is not None and dir_ok:
                     if countdown_start is None:
                         countdown_start = time.time()
                     elapsed   = time.time() - countdown_start
@@ -950,6 +967,19 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                     _draw_progress_bar(disp, ratio)
                     if remaining > 0:
                         _draw_countdown(disp, remaining)
+                elif best_box is not None and not dir_ok:
+                    # 사람은 있지만 방향이 안 맞음 → 카운트다운 보류 + 안내
+                    countdown_start = None
+                    elapsed = 0.0
+                    remaining = float(COUNTDOWN_SEC)
+                    x1, y1, x2, y2 = best_box
+                    cv2.rectangle(disp, (x1, y1), (x2, y2), (0, 140, 255), 2)
+                    hint = ("뒤로 완전히 돌아주세요" if sname == "back"
+                            else "정면을 바라봐 주세요")
+                    put_texts(disp, [
+                        ((20, 80), hint, 24, (0, 140, 255)),
+                        ((20, 112), f"(현재 인식: {cur_dir or '불명'})", 16, (180, 180, 180)),
+                    ])
                 else:
                     countdown_start = None
                     elapsed = 0.0

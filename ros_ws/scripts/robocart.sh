@@ -74,15 +74,20 @@ case "${1:-status}" in
     ;;
 
   register)
-    stop_tracker
+    stop_tracker; stop_register
     ensure_web /image/annotated
     echo "[register] web 준비 완료 → 등록 시작 (브라우저 localhost:$PORT)"
     src; cd "$RUN_DIR"
-    exec python3 -u register_node.py "${2:-}"
+    # 2번째 인자(user-id)가 있을 때만 전달 — 빈 인자 전달 방지
+    if [ -n "${2:-}" ]; then
+      exec python3 -u register_node.py --user-id "$2"
+    else
+      exec python3 -u register_node.py
+    fi
     ;;
 
   track)
-    stop_register
+    stop_tracker; stop_register
     ensure_web /image/annotated
     src; cd "$RUN_DIR"
     setsid python3 -u -m robocart_tracker.tracker_node > /tmp/tracker.log 2>&1 < /dev/null &
