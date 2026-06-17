@@ -38,9 +38,10 @@ class CameraNode(Node):
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.pub = self.create_publisher(CompressedImage, '/image/compressed', qos)
 
-        self.cap = cv2.VideoCapture(self.device)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        # C920 등 일부 USB 카메라는 기본 백엔드로 안 열림 → V4L2 명시
+        self.cap = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
+        # 주의: 이 카메라는 OpenCV 해상도 설정 시 캡처가 깨짐(0x0).
+        # → 네이티브로 열고 tick()에서 소프트웨어 리사이즈 (width/height 는 목표 출력).
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
         # 내부 버퍼 최소화 — 항상 최신 프레임 (지원 안 하는 백엔드는 무시)
         try:
@@ -64,6 +65,9 @@ class CameraNode(Node):
         if not ok or frame is None:
             self.get_logger().warn('프레임 읽기 실패', throttle_duration_sec=2.0)
             return
+        # 네이티브 프레임을 목표 해상도로 소프트웨어 리사이즈 (전송량/지연 감소)
+        if frame.shape[1] != self.width or frame.shape[0] != self.height:
+            frame = cv2.resize(frame, (self.width, self.height))
 
         ok, jpg = cv2.imencode(
             '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])

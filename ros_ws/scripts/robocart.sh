@@ -17,6 +17,9 @@ WS_SETUP=~/robocart_ws/install/setup.bash
 RUN_DIR=~/robocart_run
 WEB=~/web_stream_node.py
 PORT=8090
+# 라파 IP / 카메라 TCP 스트림 (DDS 우회). 환경변수로 덮어쓸 수 있음.
+PI_IP="${PI_IP:-192.168.0.3}"
+PI_CAM_URL="${PI_CAM_URL:-http://$PI_IP:$PORT/stream}"
 
 src() { source "$ROS_SETUP"; [ -f "$WS_SETUP" ] && source "$WS_SETUP"; export ROS_DOMAIN_ID=30; }
 
@@ -98,7 +101,9 @@ case "${1:-status}" in
     stop_tracker; stop_register
     ensure_web /image/annotated
     src; cd "$RUN_DIR"
-    setsid python3 -u -m robocart_tracker.tracker_node > /tmp/tracker.log 2>&1 < /dev/null &
+    export PI_CAM_URL   # tracker 가 라파 카메라를 TCP 로 받음 (DDS 우회)
+    echo "[track] 카메라 입력: $PI_CAM_URL"
+    setsid env PI_CAM_URL="$PI_CAM_URL" python3 -u -m robocart_tracker.tracker_node > /tmp/tracker.log 2>&1 < /dev/null &
     disown
     echo "[track] tracker 시작 — 모델 로드 ~30초 (로그: /tmp/tracker.log)"
     echo "[track] tracker=$(cnt robocart_tracker.tracker_node) web=$(cnt web_stream_node.py)"

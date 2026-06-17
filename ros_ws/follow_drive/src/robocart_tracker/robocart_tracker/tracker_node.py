@@ -29,6 +29,7 @@ import shutil
 import signal
 import threading
 import time
+import urllib.request
 
 import cv2
 import numpy as np
@@ -89,11 +90,68 @@ class RosCamera:
         pass
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# TCP 백엔드 카메라 — 라파 web_stream(MJPEG/HTTP)을 TCP로 받음
+#   DDS(UDP)가 WSL↔라파에서 불안정 → TCP 로 우회 (브라우저로 영상 보던 그 방식)
+#   PI_CAM_URL 환경변수로 활성화: 예) http://192.168.0.3:8090/stream
+# ══════════════════════════════════════════════════════════════════════════
+class HttpCamera:
+    def __init__(self, url):
+        self._url = url
+        self._frame = None
+        self._event = threading.Event()
+        self._stop = False
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _reader(self):
+        while not self._stop:
+            try:
+                stream = urllib.request.urlopen(self._url, timeout=5)
+                buf = b""
+                while not self._stop:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    a = buf.find(b"\xff\xd8")   # JPEG 시작
+                    b = buf.find(b"\xff\xd9")   # JPEG 끝
+                    if a != -1 and b != -1 and b > a:
+                        jpg = buf[a:b + 2]
+                        buf = buf[b + 2:]
+                        frame = cv2.imdecode(
+                            np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            self._frame = frame
+                            self._event.set()
+                        if len(buf) > 2_000_000:   # 버퍼 폭주 방지
+                            buf = b""
+            except Exception as e:
+                print(f"[tracker] TCP 카메라 재연결... ({e})")
+                time.sleep(1.0)
+
+    def read(self):
+        if not self._event.wait(timeout=10.0):
+            print("[tracker] 10초간 프레임 없음 — Pi web_stream / 네트워크 확인")
+            return False, None
+        self._event.clear()
+        return True, self._frame
+
+    def release(self):
+        self._stop = True
+
+
 def main() -> int:
     rclpy.init()
     node = rclpy.create_node('tracker_node')
 
-    cam = RosCamera(node)
+    # 카메라 백엔드 선택: PI_CAM_URL 있으면 TCP(HTTP), 없으면 DDS 토픽
+    pi_cam_url = os.environ.get("PI_CAM_URL", "").strip()
+    if pi_cam_url:
+        print(f"[tracker] 카메라: TCP({pi_cam_url})")
+        cam = HttpCamera(pi_cam_url)
+    else:
+        print("[tracker] 카메라: DDS(/image/compressed)")
+        cam = RosCamera(node)
     actuator = FollowActuator(node)
 
     # rclpy 콜백은 백그라운드 스레드에서 처리
