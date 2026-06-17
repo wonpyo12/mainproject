@@ -74,8 +74,9 @@ class InferenceNode(Node):
         self.declare_parameter("motor_host",        "192.168.0.67")   # RPi4 IP
         self.declare_parameter("motor_port",        9999)
         self.declare_parameter("dry_run_socket",    False)            # 소켓 끄기(개발용)
-        self.declare_parameter("lost_timeout_sec",  1.0)              # 사람 놓침 → lost 명령
-        self.declare_parameter("auto_register_sec", 5.0)              # 등록 모드 N초 후 자동 등록 (0=비활성)
+        self.declare_parameter("lost_timeout_sec",       1.0)         # 사람 놓침 → lost 명령
+        self.declare_parameter("auto_register_sec",      5.0)         # 등록 모드 N초 후 자동 등록 (0=비활성)
+        self.declare_parameter("auto_reset_after_lost_sec", 10.0)     # 추종 대상 N초간 못 잡으면 자동 리셋 (0=비활성, 다음 손님용)
 
         self.conf_thr     = self.get_parameter("conf_threshold").value
         img_topic         = self.get_parameter("image_topic").value
@@ -85,7 +86,8 @@ class InferenceNode(Node):
         self.motor_port   = self.get_parameter("motor_port").value
         self.dry_socket   = self.get_parameter("dry_run_socket").value
         self.lost_to      = self.get_parameter("lost_timeout_sec").value
-        self.auto_reg_sec = float(self.get_parameter("auto_register_sec").value)
+        self.auto_reg_sec   = float(self.get_parameter("auto_register_sec").value)
+        self.auto_reset_sec = float(self.get_parameter("auto_reset_after_lost_sec").value)
 
         # ── YOLO 로드 ────────────────────────────────────
         self.yolo = _load_yolo(self.get_parameter("yolo_model").value)
@@ -94,6 +96,7 @@ class InferenceNode(Node):
         # ── 등록된 특징 로드 ─────────────────────────────
         self.registered = load_features(self.feat_path)
         self.register_deadline: float | None = None
+        self.lost_since: float | None = None    # 추종 대상 놓친 시점 (자동 리셋용)
         if self.registered:
             print(f"  [OK] 등록 정보 로드: {self.feat_path}")
             self.mode = "track"
@@ -274,6 +277,7 @@ class InferenceNode(Node):
             if score >= thr:
                 self.locked = True
                 self.last_seen_t = now
+                self.lost_since = None       # 사람 다시 찾음 → 자동 리셋 카운트다운 취소
                 cx = (x1 + x2) / 2
                 cy = (y1 + y2) / 2
                 self.prev_cx = cx
@@ -285,12 +289,25 @@ class InferenceNode(Node):
                 self._draw_other_boxes(frame, boxes, (x1, y1, x2, y2))
                 return
 
-        # 잠금 잃음
+        # 잠금 잃음 → lost 송신 + 자동 리셋 카운트다운 시작
         if self.locked and (now - self.last_seen_t) > self.lost_to:
             self.locked = False
             self.prev_cx = None
             self._send({"type": "lost"})
             print("[inference_node] 사람 놓침 → lost 송신")
+            if self.auto_reset_sec > 0:
+                self.lost_since = now
+
+        # 자동 리셋 카운트다운 (lost 상태 + 카운트다운 활성)
+        if not self.locked and self.lost_since is not None and self.auto_reset_sec > 0:
+            elapsed = now - self.lost_since
+            remaining = self.auto_reset_sec - elapsed
+            if remaining > 0:
+                cv2.putText(frame, f"NEXT USER IN {int(remaining)+1}s",
+                            (10, 110), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.9, (0, 200, 255), 2)
+            else:
+                self._do_reset(reason=f"추종 대상 {self.auto_reset_sec:.0f}초 잃음")
 
         self._draw_other_boxes(frame, boxes, None)
 
@@ -310,15 +327,19 @@ class InferenceNode(Node):
         self.mode = "register"
 
     def _on_reset_cmd(self, _msg) -> None:
-        print("[inference_node] 리셋 명령 수신 → 등록 정보 삭제, 등록 모드 전환")
+        self._do_reset(reason="수동 리셋 명령")
+
+    def _do_reset(self, reason: str) -> None:
+        """등록 정보 삭제 + register mode 복귀 + 자동 등록 타이머 재시작."""
+        print(f"[inference_node] {reason} → 등록 정보 삭제, 등록 모드 전환")
         if self.feat_path.exists():
             self.feat_path.unlink()
         self.registered = None
         self.locked = False
         self.prev_cx = None
+        self.lost_since = None
         self.mode = "register"
         self._reg_request = False
-        # 자동 등록 타이머 재시작
         if self.auto_reg_sec > 0:
             self.register_deadline = time.time() + self.auto_reg_sec
             print(f"[inference_node] {self.auto_reg_sec:.0f}초 후 자동 등록")

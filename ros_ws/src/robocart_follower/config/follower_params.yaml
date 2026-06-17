@@ -23,6 +23,7 @@ inference_node:
     dry_run_socket: false
     lost_timeout_sec: 1.0
     auto_register_sec: 5.0           # 등록 모드 시작 N초 후 자동 등록 (0=비활성, 카운트다운 후 가장 큰 사람 등록)
+    auto_reset_after_lost_sec: 10.0  # 추종 대상 N초간 못 잡으면 자동 리셋 → 다음 손님 자동 등록 (0=비활성)
 
 # ── 모터 노드 (RPi4) ────────────────────────────────
 motor_node:

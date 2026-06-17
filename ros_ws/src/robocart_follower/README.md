@@ -78,6 +78,18 @@ ros2 topic pub /robocart/register std_msgs/Empty "{}" --once
 ```
 → 다음 프레임의 가장 큰 사람을 즉시 등록. 자동 등록 타이머를 무시한다.
 
+### 자동 리셋 (다음 손님 시나리오)
+추종 대상이 N초간 보이지 않으면 자동으로 등록 정보를 삭제하고 register mode 로 돌아간다.
+다음 손님이 카메라 앞에 오면 자동 등록되어 추종 시작.
+
+화면 표시 흐름:
+1. `TRACK 0.85` — 추종 중
+2. (사람 떠남) `NEXT USER IN 10s` → `9s` ... `1s` — 카운트다운
+3. 자동 리셋 → `REG IN 5s` — 다음 손님 자동 등록 대기
+
+파라미터: `auto_reset_after_lost_sec` (기본 10초, 0 = 비활성).
+같은 사람이 잠시 사라졌다가 돌아오면 매칭 점수로 다시 추종 — 카운트다운 자동 취소.
+
 ### 등록 정보 초기화 (새 사람 다시 등록)
 ```bash
 ros2 topic pub /robocart/reset std_msgs/Empty "{}" --once
