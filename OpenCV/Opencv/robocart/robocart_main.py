@@ -37,12 +37,53 @@ from typing import Any
 
 import serial as _serial
 
+# ── ROS2 지원 (--ros2 플래그 활성화 시) ─────────────────────────────────────
+_USE_ROS2 = '--ros2' in sys.argv
+_ROS2_AVAILABLE = False
+if _USE_ROS2:
+    try:
+        import rclpy
+        import rclpy.executors
+        import rclpy.node
+        from sensor_msgs.msg import CompressedImage
+        from std_msgs.msg import String as RosString
+        _ROS2_AVAILABLE = True
+    except ImportError:
+        print("[경고] rclpy 없음. ROS2 환경을 소싱 후 재실행하세요:")
+        print("       source /opt/ros/humble/setup.bash")
+
+# ROS2 토픽 이름 (--ros2 모드에서 사용)
+ROS2_TOPIC_IMAGE = '/robocart/image_raw/compressed'
+ROS2_TOPIC_CMD   = '/robocart/cmd'
+
 import cv2
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
-from mediapipe.python.solutions.pose import PoseLandmark   # enum: NOSE, LEFT_SHOULDER …
+# mediapipe 0.10.x에서 mediapipe.python.solutions 경로 제거됨 → 인덱스 직접 정의
+class PoseLandmark:
+    NOSE               = 0
+    LEFT_EYE_INNER     = 1
+    LEFT_EYE           = 2
+    LEFT_EYE_OUTER     = 3
+    RIGHT_EYE_INNER    = 4
+    RIGHT_EYE          = 5
+    RIGHT_EYE_OUTER    = 6
+    LEFT_EAR           = 7
+    RIGHT_EAR          = 8
+    LEFT_SHOULDER      = 11
+    RIGHT_SHOULDER     = 12
+    LEFT_ELBOW         = 13
+    RIGHT_ELBOW        = 14
+    LEFT_WRIST         = 15
+    RIGHT_WRIST        = 16
+    LEFT_HIP           = 23
+    RIGHT_HIP          = 24
+    LEFT_KNEE          = 25
+    RIGHT_KNEE         = 26
+    LEFT_ANKLE         = 27
+    RIGHT_ANKLE        = 28
 
 # ── YOLO ─────────────────────────────────────────────────────────────────────
 try:
@@ -152,19 +193,62 @@ ESP32_PORT = "COM5"   # 장치관리자에서 확인 후 변경
 ESP32_BAUD = 9600
 
 _esp: _serial.Serial | None = None
-try:
-    _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
-    print(f"[ESP32] 연결됨: {ESP32_PORT}")
-except Exception:
-    print(f"[ESP32] 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
+_esp_ros_node = None  # ROS2 모드에서 publish_cmd() 대상 노드
+
+if not _USE_ROS2:
+    try:
+        _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
+        print(f"[ESP32] 시리얼 연결됨: {ESP32_PORT}")
+    except Exception:
+        print(f"[ESP32] 시리얼 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
 
 
 def _esp_send(cmd: str) -> None:
-    if _esp and _esp.is_open:
+    if _esp_ros_node is not None:
+        _esp_ros_node.publish_cmd(cmd)
+    elif _esp and _esp.is_open:
         try:
             _esp.write((cmd + "\n").encode())
         except Exception:
             pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROS2 노드 (--ros2 활성화 시만 정의)
+# ══════════════════════════════════════════════════════════════════════════════
+
+if _ROS2_AVAILABLE:
+    class RobocartNode(rclpy.node.Node):
+        """라즈베리파이 카메라 구독 + ESP32 명령 발행 ROS2 노드."""
+
+        def __init__(self):
+            super().__init__('robocart_main')
+            self._frame_lock = threading.Lock()
+            self._latest_frame: np.ndarray | None = None
+
+            self._sub = self.create_subscription(
+                CompressedImage, ROS2_TOPIC_IMAGE, self._cb_image, 10)
+            self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
+            self.get_logger().info(
+                f'시작  이미지={ROS2_TOPIC_IMAGE}  명령={ROS2_TOPIC_CMD}')
+
+        def _cb_image(self, msg) -> None:
+            arr = np.frombuffer(bytes(msg.data), np.uint8)
+            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if frame is not None:
+                with self._frame_lock:
+                    self._latest_frame = frame
+
+        def get_frame(self) -> np.ndarray | None:
+            with self._frame_lock:
+                return (self._latest_frame.copy()
+                        if self._latest_frame is not None else None)
+
+        def publish_cmd(self, cmd: str) -> None:
+            msg = RosString()
+            msg.data = cmd
+            self._pub.publish(msg)
+            self.get_logger().info(f'CMD → {cmd}')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -829,7 +913,7 @@ CAPTURE_FLASH   = 1.2    # 촬영 완료 표시 시간 (초)
 
 
 def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
-                  user_id: str = "owner_001") -> bool:
+                  user_id: str = "owner_001", ros2_node=None) -> bool:
     """앞/뒤 자동 촬영 후 등록 프로필(JSON)을 저장합니다.
 
     흐름: 사람 감지 → 3초 카운트다운 → 자동 촬영 → 뒤로 돌기 안내 → 반복
@@ -838,10 +922,14 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
     (SAMPLES_DIR / "front").mkdir(parents=True, exist_ok=True)
     (SAMPLES_DIR / "back").mkdir(parents=True, exist_ok=True)
 
-    cap = open_camera()
-    if cap is None:
-        print("[오류] 카메라를 열 수 없습니다.")
-        return False
+    if ros2_node is not None:
+        cap = None
+        print(f"[등록] ROS2 카메라 모드 — 토픽: {ROS2_TOPIC_IMAGE}")
+    else:
+        cap = open_camera()
+        if cap is None:
+            print("[오류] 카메라를 열 수 없습니다.")
+            return False
 
     stages = [
         ("front", "정면을 바라보세요"),
@@ -852,6 +940,9 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
     print("\n=== 사용자 등록 (자동 촬영) ===  Q: 취소\n")
 
     def _read() -> tuple[bool, np.ndarray | None]:
+        if ros2_node is not None:
+            f = ros2_node.get_frame()
+            return (f is not None), f
         ok, f = cap.read()
         return ok, f if ok else None
 
@@ -1008,7 +1099,8 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                         return False
 
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
         cv2.destroyAllWindows()
 
     if not all(samples[s] for s, _ in stages):
@@ -1157,11 +1249,16 @@ class DetectionWorker(threading.Thread):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
-                 reid_model, profile: dict, panel_width: int = 240) -> None:
-    cap = open_camera()
-    if cap is None:
-        print("[오류] 카메라를 열 수 없습니다.")
-        return
+                 reid_model, profile: dict, panel_width: int = 240,
+                 ros2_node=None) -> None:
+    if ros2_node is not None:
+        cap = None
+        print(f"[추종] ROS2 카메라 모드 — 토픽: {ROS2_TOPIC_IMAGE}")
+    else:
+        cap = open_camera()
+        if cap is None:
+            print("[오류] 카메라를 열 수 없습니다.")
+            return
 
     tracker    = TrackingState()
     frame_count = 0
@@ -1178,9 +1275,16 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
 
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
+            if ros2_node is not None:
+                frame = ros2_node.get_frame()
+                if frame is None:
+                    if cv2.waitKey(10) & 0xFF == 27:
+                        break
+                    continue
+            else:
+                ok, frame = cap.read()
+                if not ok:
+                    break
 
             frame_count += 1
             fps = frame_count / max(time.time() - t0, 1e-6)
@@ -1259,7 +1363,8 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
                 break
     finally:
         worker.stop()
-        cap.release()
+        if cap is not None:
+            cap.release()
         cv2.destroyAllWindows()
 
 
@@ -1273,6 +1378,8 @@ def parse_args():
     p.add_argument("--reset",    action="store_true", help="기존 데이터 삭제 후 재등록")
     p.add_argument("--camera",   type=int, default=0, help="카메라 인덱스 (기본값: 0)")
     p.add_argument("--user-id",  default="owner_001",  help="등록 사용자 ID")
+    p.add_argument("--ros2",     action="store_true",
+                   help="ROS2 모드: 라즈베리파이 카메라 구독 + /robocart/cmd 발행")
     return p.parse_args()
 
 
@@ -1290,6 +1397,29 @@ def main() -> int:
     print("  SmartCart 등록 사용자 실시간 인식 시스템")
     print("  YOLO + MediaPipe PoseLandmarker + ResNet50 ReID")
     print("=" * 58)
+
+    # ── ROS2 노드 초기화 ──────────────────────────────────────────────────────
+    ros2_node = None
+    if args.ros2:
+        if not _ROS2_AVAILABLE:
+            print("\n[오류] rclpy를 찾을 수 없습니다.")
+            print("  source /opt/ros/humble/setup.bash  후 재실행하세요.")
+            return 1
+        import atexit
+        rclpy.init()
+        ros2_node = RobocartNode()
+        global _esp_ros_node
+        _esp_ros_node = ros2_node
+        atexit.register(rclpy.shutdown)
+
+        executor = rclpy.executors.MultiThreadedExecutor()
+        executor.add_node(ros2_node)
+        _spin_thread = threading.Thread(
+            target=executor.spin, daemon=True, name="rclpy-spin")
+        _spin_thread.start()
+        print(f"\n[ROS2] 노드 시작 완료")
+        print(f"  이미지 구독: {ROS2_TOPIC_IMAGE}")
+        print(f"  명령 발행:   {ROS2_TOPIC_CMD}\n")
 
     # ── 모델 로드 ─────────────────────────────────────────────────────────────
     print("\n[1/3] YOLO (yolov8n) 로드...")
@@ -1330,7 +1460,8 @@ def main() -> int:
             return 0
 
     if need_reg:
-        ok = register_user(yolo, hog_fallback, pose, reid_model, args.user_id)
+        ok = register_user(yolo, hog_fallback, pose, reid_model, args.user_id,
+                           ros2_node=ros2_node)
         if not ok:
             pose.close()
             return 1
@@ -1347,7 +1478,8 @@ def main() -> int:
     print(f"등록 일시: {profile.get('registered_at', 'N/A')}\n")
 
     # ── 실시간 추종 ───────────────────────────────────────────────────────────
-    run_tracking(yolo, hog_fallback, pose, reid_model, profile)
+    run_tracking(yolo, hog_fallback, pose, reid_model, profile,
+                 ros2_node=ros2_node)
 
     pose.close()
     return 0

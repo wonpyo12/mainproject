@@ -13,3 +13,11 @@ ultralytics>=8.0.0
 # ReID 백본 (ResNet50)
 torch>=2.0.0
 torchvision>=0.15.0
+
+# ESP32 시리얼 통신 (--ros2 없이 USB 시리얼 모드 사용 시)
+pyserial>=3.5
+
+# ── ROS2 모드 (--ros2 플래그) ───────────────────────────────────────────
+# rclpy는 pip로 설치하지 않음 — ROS2 Humble 설치 후 아래 명령으로 활성화:
+#   source /opt/ros/humble/setup.bash
+# sensor_msgs, std_msgs 등 메시지 패키지도 ROS2에 포함됨

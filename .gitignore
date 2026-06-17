@@ -44,6 +44,10 @@ local.properties
 *.swp
 *.class
 
+# Python
+__pycache__/
+*.pyc
+
 # Operating System Files
 .DS_Store
 Thumbs.db
