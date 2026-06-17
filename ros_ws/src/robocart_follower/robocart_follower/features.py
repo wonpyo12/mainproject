@@ -1,0 +1,176 @@
+"""
+사람 특징 추출 및 매칭 모듈 (경량)
+
+다른 팀원의 무거운 방식(ResNet50 + MediaPipe)과 달리,
+순수 OpenCV 연산만으로 빠르게 특징 추출/비교.
+
+특징 가중치 (합 = 1.0):
+  - HSV 색상 (상/하의 분리)  60%
+  - 머리 영역 색상            20%
+  - bbox 가로/세로 비율       10%
+  - 위치 연속성 (이전 프레임) 10%
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+# ── 매칭 임계값 (튜닝 가능) ─────────────────────────────────
+MATCH_THRESHOLD = 0.72   # 새 사람을 추종 대상으로 잠금
+KEEP_THRESHOLD  = 0.60   # 잠금 유지 (이 아래로 떨어지면 lost)
+
+# 가중치 (합 = 1.0)
+W_COLOR    = 0.60
+W_HAIR     = 0.20
+W_SHAPE    = 0.10
+W_POSITION = 0.10
+
+# 색상 히스토그램 bin 수 (작을수록 빠르지만 거칠어짐)
+HIST_BINS_H = 16   # Hue
+HIST_BINS_S = 16   # Saturation
+
+
+def _safe_crop(image: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> np.ndarray | None:
+    """이미지 경계를 벗어나지 않게 잘라내기."""
+    h, w = image.shape[:2]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return image[y1:y2, x1:x2]
+
+
+def _hsv_hist(bgr_crop: np.ndarray) -> np.ndarray:
+    """HSV 2D 히스토그램 (Hue+Saturation). 조명 변화에 강함."""
+    hsv = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist(
+        [hsv], [0, 1], None,
+        [HIST_BINS_H, HIST_BINS_S],
+        [0, 180, 0, 256],
+    )
+    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+    return hist.flatten()
+
+
+def extract_features(image: np.ndarray, bbox: tuple[int, int, int, int]) -> dict | None:
+    """
+    한 사람 bbox에서 특징 추출.
+
+    bbox: (x1, y1, x2, y2) 픽셀 좌표
+    반환: 특징 dict (없으면 None)
+    """
+    x1, y1, x2, y2 = bbox
+    person = _safe_crop(image, x1, y1, x2, y2)
+    if person is None:
+        return None
+
+    bh, bw = person.shape[:2]
+    if bh < 40 or bw < 20:   # 너무 작은 박스는 무시
+        return None
+
+    # 사람 영역 3분할: 머리(상단 15%) / 상의(15~55%) / 하의(55~100%)
+    head_y2  = int(bh * 0.15)
+    upper_y2 = int(bh * 0.55)
+
+    head_crop  = person[0:head_y2, :]
+    upper_crop = person[head_y2:upper_y2, :]
+    lower_crop = person[upper_y2:bh, :]
+
+    feat = {
+        "hist_head":  _hsv_hist(head_crop).tolist()  if head_crop.size  else None,
+        "hist_upper": _hsv_hist(upper_crop).tolist() if upper_crop.size else None,
+        "hist_lower": _hsv_hist(lower_crop).tolist() if lower_crop.size else None,
+        "aspect":     bw / bh,   # 체형 (가로/세로 비)
+        "cx":         (x1 + x2) / 2,
+        "cy":         (y1 + y2) / 2,
+        "timestamp":  time.time(),
+    }
+    return feat
+
+
+def _hist_similarity(h1: list | None, h2: list | None) -> float:
+    """두 히스토그램 코사인 유사도 (0~1)."""
+    if h1 is None or h2 is None:
+        return 0.0
+    a = np.array(h1, dtype=np.float32)
+    b = np.array(h2, dtype=np.float32)
+    denom = (np.linalg.norm(a) * np.linalg.norm(b))
+    if denom < 1e-6:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
+def compare_features(saved: dict, current: dict, prev_cx: float | None = None) -> float:
+    """
+    저장된 특징과 현재 후보의 매칭 점수 (0~1).
+
+    prev_cx: 이전 프레임의 추종 대상 중심 x (위치 연속성 계산용)
+    """
+    # 1) 상의 색상
+    sim_upper = _hist_similarity(saved.get("hist_upper"), current.get("hist_upper"))
+    # 2) 하의 색상
+    sim_lower = _hist_similarity(saved.get("hist_lower"), current.get("hist_lower"))
+    # 3) 머리 색상 (모자/머리)
+    sim_head  = _hist_similarity(saved.get("hist_head"), current.get("hist_head"))
+    # 4) 체형 비율 (차이가 작을수록 점수 ↑)
+    a_saved, a_curr = saved.get("aspect", 0.5), current.get("aspect", 0.5)
+    sim_shape = max(0.0, 1.0 - abs(a_saved - a_curr) / max(a_saved, 0.1))
+    # 5) 위치 연속성 (이전 프레임 중심과 가까울수록 ↑)
+    if prev_cx is None:
+        sim_pos = 0.5   # 정보 없음 → 중립
+    else:
+        dx = abs(current.get("cx", prev_cx) - prev_cx)
+        sim_pos = max(0.0, 1.0 - dx / 300.0)   # 300px 떨어지면 0점
+
+    # 상/하의 평균을 색상 점수로
+    sim_color = (sim_upper + sim_lower) / 2
+
+    score = (
+        W_COLOR    * sim_color +
+        W_HAIR     * sim_head +
+        W_SHAPE    * sim_shape +
+        W_POSITION * sim_pos
+    )
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def save_features(feat: dict, path: str | Path) -> None:
+    """등록된 사용자 특징을 JSON 파일로 저장."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(feat, f, ensure_ascii=False, indent=2)
+
+
+def load_features(path: str | Path) -> dict | None:
+    """저장된 특징 불러오기. 파일 없으면 None."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ── 자체 점검 (개발 중 수동 테스트용) ─────────────────────────
+if __name__ == "__main__":
+    print("[features.py] 자체 점검")
+    # 더미 이미지 (640x480) 가운데에 가짜 사람 박스
+    img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+    bbox = (200, 100, 440, 460)
+
+    f1 = extract_features(img, bbox)
+    print(f"  [OK] 특징 추출 → 키: {list(f1.keys())}")
+
+    f2 = extract_features(img, bbox)
+    score = compare_features(f1, f2, prev_cx=320)
+    print(f"  [OK] 동일 박스 매칭 점수: {score:.3f} (1.0에 가까워야 정상)")
+
+    # 다른 박스
+    f3 = extract_features(img, (50, 50, 200, 400))
+    score2 = compare_features(f1, f3, prev_cx=320)
+    print(f"  [OK] 다른 박스 매칭 점수: {score2:.3f}")
+    print("[features.py] 점검 완료")
