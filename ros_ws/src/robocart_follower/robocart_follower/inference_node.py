@@ -27,8 +27,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Image as RosImage
 from std_msgs.msg import Empty
+from cv_bridge import CvBridge
 
 from .features import (
     KEEP_THRESHOLD,
@@ -93,13 +94,17 @@ class InferenceNode(Node):
             depth=1,
         )
 
-        # 구독
+        # 구독 (BEST_EFFORT — camera_node 와 일치)
         self.create_subscription(CompressedImage, img_topic, self._on_image, qos)
         print(f"  [OK] 구독: {img_topic}")
 
-        # 발행 (오버레이)
+        # 발행 (오버레이) — compressed + raw 동시 발행 (RViz Image 디스플레이는 raw 필요)
         self.overlay_pub = self.create_publisher(CompressedImage, overlay_topic, qos)
-        print(f"  [OK] 오버레이 발행: {overlay_topic}")
+        raw_overlay_topic = overlay_topic.replace("/compressed", "")
+        self.overlay_raw_pub = self.create_publisher(RosImage, raw_overlay_topic, 10)
+        self.bridge = CvBridge()
+        print(f"  [OK] 오버레이 발행: {overlay_topic} (compressed)")
+        print(f"  [OK] 오버레이 발행: {raw_overlay_topic} (raw, RViz용)")
 
         # ── 추적 상태 ────────────────────────────────────
         self.prev_cx: float | None = None
@@ -287,15 +292,24 @@ class InferenceNode(Node):
 
     # ════════════════════════════════════════════════════
     def _publish_overlay(self, frame) -> None:
+        now = self.get_clock().now().to_msg()
+        # compressed (다운스트림 호환)
         ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-        if not ok:
-            return
-        msg = CompressedImage()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "camera"
-        msg.format = "jpeg"
-        msg.data = buf.tobytes()
-        self.overlay_pub.publish(msg)
+        if ok:
+            msg = CompressedImage()
+            msg.header.stamp = now
+            msg.header.frame_id = "camera"
+            msg.format = "jpeg"
+            msg.data = buf.tobytes()
+            self.overlay_pub.publish(msg)
+        # raw (RViz Image 디스플레이용)
+        try:
+            raw = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+            raw.header.stamp = now
+            raw.header.frame_id = "camera"
+            self.overlay_raw_pub.publish(raw)
+        except Exception as e:
+            print(f"[inference_node] raw 발행 실패: {e}")
 
 
 def main(args=None) -> None:
