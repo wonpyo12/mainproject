@@ -34,7 +34,15 @@ kill_all() {
 
 free_port() { command -v fuser >/dev/null && fuser -k ${PORT}/tcp 2>/dev/null; sleep 1; }
 
-stop_tracker()  { kill_all "robocart_tracker.tracker_node"; }
+# tracker 는 SIGTERM 먼저 — 종료 정리 핸들러(세션 데이터 삭제)가 돌게 한 뒤,
+# 남으면 SIGKILL. (일회용 등록 데이터를 종료 시 지우기 위함)
+stop_tracker() {
+  for p in $(pgrep -f "robocart_tracker.tracker_node" | grep -vw "$$"); do
+    kill -TERM "$p" 2>/dev/null
+  done
+  sleep 2
+  kill_all "robocart_tracker.tracker_node"
+}
 stop_register() { kill_all "register_node.py"; }
 stop_web()      { kill_all "web_stream_node.py"; free_port; }
 

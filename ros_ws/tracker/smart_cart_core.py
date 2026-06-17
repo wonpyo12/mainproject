@@ -222,13 +222,33 @@ def create_yolo():
     return _YOLO(YOLO_MODEL_FILE)
 
 
+# OSNet(Person-ReID 전용) 가중치 경로 — market1501 학습본
+OSNET_WEIGHTS = DATA_DIR / "osnet_x1_0_market1501.pth"
+
+
 def create_reid_model():
     if not TORCH_AVAILABLE:
         return None
+
+    # 1순위: OSNet (Person-ReID 전용, market1501 학습) — 사람 구분 정확도 높음
+    if OSNET_WEIGHTS.exists():
+        try:
+            import torchreid
+            model = torchreid.models.build_model(
+                "osnet_x1_0", num_classes=1000, loss="softmax", pretrained=False)
+            torchreid.utils.load_pretrained_weights(model, str(OSNET_WEIGHTS))
+            model.eval()   # eval 모드에서 forward 는 512차원 임베딩 반환
+            print("  → OSNet x1_0 (market1501) ReID 모델 사용")
+            return model
+        except Exception as e:
+            print(f"  → OSNet 로드 실패({e}) — ResNet50 폴백")
+
+    # 폴백: ImageNet ResNet50 (ReID 전용 아님)
     weights = tv_models.ResNet50_Weights.IMAGENET1K_V1
     model = tv_models.resnet50(weights=weights)
     model.fc = torch.nn.Identity()   # 2048-dim 출력
     model.eval()
+    print("  → ResNet50(ImageNet) ReID 모델 사용")
     return model
 
 
@@ -1245,6 +1265,18 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             color_ok = best_detail is not None and best_detail.get("color", 0) >= COLOR_FLOOR
             matched  = (best_bbox is not None and best_total >= MATCH_THRESHOLD
                         and reid_ok and color_ok)
+
+            # ── 점수 진단 로그 (1초 간격) — 왜 인식이 되고/안 되는지 ──────────
+            if best_detail is not None and frame_count % 15 == 0:
+                why = "" if matched else (
+                    " [차단:" +
+                    ("total<%.2f " % MATCH_THRESHOLD if best_total < MATCH_THRESHOLD else "") +
+                    ("reid<%.2f " % REID_FLOOR if not reid_ok else "") +
+                    ("color<%.2f" % COLOR_FLOOR if not color_ok else "") + "]")
+                print("[score] total=%.2f reid=%.2f color=%.2f shape=%.2f pos=%.2f ori=%s %s"
+                      % (best_total, best_detail.get("reid", 0), best_detail.get("color", 0),
+                         best_detail.get("shape", 0), best_detail.get("position", 0),
+                         best_ori, ("MATCH" if matched else why)), flush=True)
 
             if matched:
                 tracker.update(True, best_bbox, best_total)

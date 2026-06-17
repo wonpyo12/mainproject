@@ -24,6 +24,9 @@
   # 회전 방향이 반대면:
   ros2 run robocart_tracker tracker_node --ros-args -p k_rot:=-1.0 -p forward_speed:=0.12
 """
+import os
+import shutil
+import signal
 import threading
 import time
 
@@ -32,10 +35,27 @@ import numpy as np
 import rclpy
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import String
 
 import smart_cart_core as core
 
 from robocart_tracker.follow_actuator import FollowActuator
+
+
+def cleanup_session():
+    """세션 종료 — 일회용 등록 데이터(프로필·샘플) 삭제."""
+    try:
+        if core.PROFILE_PATH.exists():
+            core.PROFILE_PATH.unlink()
+            print(f"[session] 프로필 삭제: {core.PROFILE_PATH}")
+    except Exception as e:
+        print(f"[session] 프로필 삭제 실패: {e}")
+    try:
+        if core.SAMPLES_DIR.exists():
+            shutil.rmtree(core.SAMPLES_DIR, ignore_errors=True)
+            print(f"[session] 샘플 삭제: {core.SAMPLES_DIR}")
+    except Exception as e:
+        print(f"[session] 샘플 삭제 실패: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -109,15 +129,16 @@ def main() -> int:
 
     cv2.imshow = ros_imshow
 
-    print("[tracker] 프로필 로드...")
-    try:
-        profile = core.load_profile()
-    except FileNotFoundError:
-        print(f"[tracker] 프로필 없음: {core.PROFILE_PATH}")
-        print("          Windows에서 먼저 사용자 등록을 하거나 data/ 를 복사하세요")
-        return 1
-    print(f"[tracker] 사용자 [{profile['user_id']}] 로드 완료")
+    # 등록 중 카메라 고정용 서보 명령 publisher
+    servo_pub = node.create_publisher(String, '/robocart/servo', 10)
 
+    def hold_camera_center():
+        for cmd in ("SCAN_STOP", "CENTER"):
+            m = String(); m.data = cmd
+            servo_pub.publish(m)
+            time.sleep(0.2)
+
+    # ── 모델 로드 (등록·추적 공용, 1회만) ───────────────────────
     print("[tracker] 모델 로드 (YOLO/MediaPipe/ReID)...")
     yolo = core.create_yolo()
     hog = None
@@ -128,11 +149,36 @@ def main() -> int:
     pose = core.create_pose_estimator()
     reid = core.create_reid_model()
 
+    # ── 세션 시작: 기존 데이터 초기화 후 자동 등록 ──────────────
+    # (강제종료로 남은 잔여 프로필 제거 = 부팅 시 초기화 보강)
+    cleanup_session()
+    print("[session] 자동 등록 시작 — 브라우저(localhost:8090) 보며 정면→뒤돌기")
+    time.sleep(1.0)
+    for _ in range(3):
+        hold_camera_center()
+
+    ok = core.register_user(yolo, hog, pose, reid, user_id="owner_001")
+    if not ok:
+        print("[session] 등록 실패 — 종료")
+        cleanup_session()
+        rclpy.shutdown()
+        return 1
+    profile = core.load_profile()
+    print(f"[session] 등록 완료 [{profile['user_id']}] → 추적 시작")
+
+    # ── 종료 시 정리: SIGTERM(스크립트 stop) 핸들러 ─────────────
+    def _on_term(_signum, _frame):
+        cleanup_session()
+        os._exit(0)
+    signal.signal(signal.SIGTERM, _on_term)
+
     print("[tracker] 추적 시작 — Pi 영상 수신 중 (cmd_vel→TurtleBot3, servo→ESP32)")
     try:
         core.run_tracking(yolo, hog, pose, reid, profile, servo=actuator)
     finally:
+        # 정상 종료 / Ctrl+C → 등록 데이터 삭제
         actuator.close()
+        cleanup_session()
         rclpy.shutdown()
     return 0
 
