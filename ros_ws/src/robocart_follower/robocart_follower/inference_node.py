@@ -166,7 +166,17 @@ class InferenceNode(Node):
         arr = np.frombuffer(msg.data, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
+            print("[DEBUG] imdecode → None (디코드 실패)")
             return
+
+        # [임시 디버그] 첫 프레임 저장 + 30 프레임마다 통계 출력
+        if not getattr(self, "_dbg_saved", False):
+            cv2.imwrite("/tmp/recv_test.jpg", frame)
+            self._dbg_saved = True
+            print(f"[DEBUG] 첫 프레임 저장 → /tmp/recv_test.jpg  shape={frame.shape}  mean={frame.mean():.0f}")
+        self._dbg_count = getattr(self, "_dbg_count", 0) + 1
+        if self._dbg_count % 30 == 0:
+            print(f"[DEBUG] 누적 {self._dbg_count}프레임  mean={frame.mean():.0f}")
 
         # YOLO 추론 (사람만)
         results = self.yolo.predict(
