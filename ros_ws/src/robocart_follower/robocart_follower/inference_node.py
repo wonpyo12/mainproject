@@ -66,24 +66,26 @@ class InferenceNode(Node):
         super().__init__("inference_node")
 
         # ── 파라미터 ─────────────────────────────────────
-        self.declare_parameter("yolo_model",       "yolov8n.pt")
-        self.declare_parameter("conf_threshold",   0.45)
-        self.declare_parameter("image_topic",      "/robocart/image_raw/compressed")
-        self.declare_parameter("overlay_topic",    "/robocart/image_overlay/compressed")
-        self.declare_parameter("features_path",    "/tmp/robocart_features.json")
-        self.declare_parameter("motor_host",       "192.168.0.67")   # RPi4 IP
-        self.declare_parameter("motor_port",       9999)
-        self.declare_parameter("dry_run_socket",   False)            # 소켓 끄기(개발용)
-        self.declare_parameter("lost_timeout_sec", 1.0)              # 사람 놓침 → lost 명령
+        self.declare_parameter("yolo_model",        "yolov8n.pt")
+        self.declare_parameter("conf_threshold",    0.45)
+        self.declare_parameter("image_topic",       "/robocart/image_raw/compressed")
+        self.declare_parameter("overlay_topic",     "/robocart/image_overlay/compressed")
+        self.declare_parameter("features_path",     "/tmp/robocart_features.json")
+        self.declare_parameter("motor_host",        "192.168.0.67")   # RPi4 IP
+        self.declare_parameter("motor_port",        9999)
+        self.declare_parameter("dry_run_socket",    False)            # 소켓 끄기(개발용)
+        self.declare_parameter("lost_timeout_sec",  1.0)              # 사람 놓침 → lost 명령
+        self.declare_parameter("auto_register_sec", 5.0)              # 등록 모드 N초 후 자동 등록 (0=비활성)
 
-        self.conf_thr   = self.get_parameter("conf_threshold").value
-        img_topic       = self.get_parameter("image_topic").value
-        overlay_topic   = self.get_parameter("overlay_topic").value
-        self.feat_path  = Path(self.get_parameter("features_path").value)
-        self.motor_host = self.get_parameter("motor_host").value
-        self.motor_port = self.get_parameter("motor_port").value
-        self.dry_socket = self.get_parameter("dry_run_socket").value
-        self.lost_to    = self.get_parameter("lost_timeout_sec").value
+        self.conf_thr     = self.get_parameter("conf_threshold").value
+        img_topic         = self.get_parameter("image_topic").value
+        overlay_topic     = self.get_parameter("overlay_topic").value
+        self.feat_path    = Path(self.get_parameter("features_path").value)
+        self.motor_host   = self.get_parameter("motor_host").value
+        self.motor_port   = self.get_parameter("motor_port").value
+        self.dry_socket   = self.get_parameter("dry_run_socket").value
+        self.lost_to      = self.get_parameter("lost_timeout_sec").value
+        self.auto_reg_sec = float(self.get_parameter("auto_register_sec").value)
 
         # ── YOLO 로드 ────────────────────────────────────
         self.yolo = _load_yolo(self.get_parameter("yolo_model").value)
@@ -91,12 +93,17 @@ class InferenceNode(Node):
 
         # ── 등록된 특징 로드 ─────────────────────────────
         self.registered = load_features(self.feat_path)
+        self.register_deadline: float | None = None
         if self.registered:
             print(f"  [OK] 등록 정보 로드: {self.feat_path}")
             self.mode = "track"
         else:
-            print(f"  [INFO] 등록 정보 없음 → 등록 모드 (R 키로 등록)")
+            print(f"  [INFO] 등록 정보 없음 → 등록 모드")
             self.mode = "register"
+            # 자동 등록 타이머 시작 (셀프서비스용)
+            if self.auto_reg_sec > 0:
+                self.register_deadline = time.time() + self.auto_reg_sec
+                print(f"  [INFO] {self.auto_reg_sec:.0f}초 후 자동 등록 (가장 큰 사람)")
 
         # ── ROS QoS ──────────────────────────────────────
         qos = QoSProfile(
@@ -206,6 +213,25 @@ class InferenceNode(Node):
         # ── 등록 모드 ─────────────────────────────────
         if self.mode == "register":
             self._draw_register_overlay(frame, boxes)
+
+            # 카운트다운 + 시간 경과 시 자동 등록 트리거
+            if self.register_deadline is not None:
+                remaining = self.register_deadline - time.time()
+                if remaining > 0:
+                    cv2.putText(frame, f"REG IN {int(remaining)+1}s",
+                                (10, 70), cv2.FONT_HERSHEY_SIMPLEX,
+                                1.2, (0, 200, 255), 3)
+                elif boxes:
+                    # 시간 만료 + 사람 있음 → 자동 등록 실행
+                    self._reg_request = True
+                    self.register_deadline = None
+                else:
+                    # 시간 만료 + 사람 없음 → 사람 보일 때까지 자동 등록 대기
+                    cv2.putText(frame, "WAITING FOR PERSON",
+                                (10, 70), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.9, (0, 200, 255), 2)
+                    self._reg_request = True   # 보이는 첫 프레임에 등록
+
             if self._reg_request and boxes:
                 # 가장 큰 박스 선택
                 largest = max(boxes, key=lambda d: (d["bbox"][2] - d["bbox"][0]) *
@@ -291,6 +317,13 @@ class InferenceNode(Node):
         self.locked = False
         self.prev_cx = None
         self.mode = "register"
+        self._reg_request = False
+        # 자동 등록 타이머 재시작
+        if self.auto_reg_sec > 0:
+            self.register_deadline = time.time() + self.auto_reg_sec
+            print(f"[inference_node] {self.auto_reg_sec:.0f}초 후 자동 등록")
+        else:
+            self.register_deadline = None
 
     def _draw_register_overlay(self, frame, boxes: list[dict]) -> None:
         h, w = frame.shape[:2]

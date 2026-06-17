@@ -60,17 +60,23 @@ rviz2 -d ~/ros_ws/install/robocart_follower/share/robocart_follower/config/follo
 
 ---
 
-## 사람 등록 방법 (RViz + ROS 토픽)
+## 사람 등록 방법
 
-inference_node 는 GUI 창을 띄우지 않는다(헤드리스). 시각화는 RViz 의 Image 디스플레이에서 `/robocart/image_overlay/compressed` 를 본다.
+### 자동 등록 (셀프서비스, 기본)
+`inference_node` 시작 시 등록 정보가 없으면 자동으로 **카운트다운**(기본 5초)이 시작된다.
 
-1. RViz 가 떠 있고 오버레이 영상이 보이면, 추종할 사람이 카메라 정면에 들어오게 한다.
-2. **별도 터미널**에서 등록 명령 한 줄을 발행한다:
-   ```bash
-   ros2 topic pub /robocart/register std_msgs/Empty "{}" --once
-   ```
-3. inference_node 콘솔에 `등록 명령 수신 → 다음 프레임의 가장 큰 사람을 등록` 로그가 뜨고, `/tmp/robocart_features.json` 에 특징 저장.
-4. 자동으로 **추종 모드** 전환. 박스가 노란색 → 초록색으로 바뀌고 `TRACK` 점수가 표시된다.
+1. 카메라 정면에 들어가 자세를 잡는다.
+2. 오버레이 영상에 `REG IN 5s` → `4s` → `3s` ... 카운트다운 표시.
+3. 0초 도달 시 가장 큰 사람을 자동 등록 → 추종 모드 전환.
+4. 카운트다운 시점에 사람이 없으면 `WAITING FOR PERSON` 표시, 보이는 첫 프레임에 등록.
+
+카운트다운 시간 조정: `follower_params.yaml` 의 `auto_register_sec` (기본 5.0, 0 = 비활성).
+
+### 수동 등록 (즉시)
+```bash
+ros2 topic pub /robocart/register std_msgs/Empty "{}" --once
+```
+→ 다음 프레임의 가장 큰 사람을 즉시 등록. 자동 등록 타이머를 무시한다.
 
 ### 등록 정보 초기화 (새 사람 다시 등록)
 ```bash
