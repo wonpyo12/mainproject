@@ -29,7 +29,18 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage, Image as RosImage
 from std_msgs.msg import Empty
-from cv_bridge import CvBridge
+
+
+def _bgr_to_imgmsg(bgr: "np.ndarray") -> RosImage:
+    """numpy BGR → sensor_msgs/Image (cv_bridge 미사용, NumPy 2.x 호환)"""
+    msg = RosImage()
+    msg.height = int(bgr.shape[0])
+    msg.width  = int(bgr.shape[1])
+    msg.encoding = "bgr8"
+    msg.is_bigendian = 0
+    msg.step = int(bgr.shape[1] * 3)   # bytes per row
+    msg.data = bgr.tobytes()
+    return msg
 
 from .features import (
     KEEP_THRESHOLD,
@@ -102,7 +113,6 @@ class InferenceNode(Node):
         self.overlay_pub = self.create_publisher(CompressedImage, overlay_topic, qos)
         raw_overlay_topic = overlay_topic.replace("/compressed", "")
         self.overlay_raw_pub = self.create_publisher(RosImage, raw_overlay_topic, 10)
-        self.bridge = CvBridge()
         print(f"  [OK] 오버레이 발행: {overlay_topic} (compressed)")
         print(f"  [OK] 오버레이 발행: {raw_overlay_topic} (raw, RViz용)")
 
@@ -302,14 +312,11 @@ class InferenceNode(Node):
             msg.format = "jpeg"
             msg.data = buf.tobytes()
             self.overlay_pub.publish(msg)
-        # raw (RViz Image 디스플레이용)
-        try:
-            raw = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
-            raw.header.stamp = now
-            raw.header.frame_id = "camera"
-            self.overlay_raw_pub.publish(raw)
-        except Exception as e:
-            print(f"[inference_node] raw 발행 실패: {e}")
+        # raw (RViz Image 디스플레이용) — cv_bridge 미사용 (NumPy 2.x 호환)
+        raw = _bgr_to_imgmsg(frame)
+        raw.header.stamp = now
+        raw.header.frame_id = "camera"
+        self.overlay_raw_pub.publish(raw)
 
 
 def main(args=None) -> None:
