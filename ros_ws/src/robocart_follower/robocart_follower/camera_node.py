@@ -42,17 +42,38 @@ class CameraNode(Node):
         self.jpeg_quality = self.get_parameter("jpeg_quality").value
         topic = self.get_parameter("publish_topic").value
 
-        # ── 웹캠 열기 ────────────────────────────────────
-        print(f"[camera_node] 웹캠 열기: /dev/video{device_id} ({self.w}x{self.h} @ {self.fps_target}fps)")
-        self.cap = cv2.VideoCapture(device_id)
-        if not self.cap.isOpened():
-            print(f"  [FAIL] /dev/video{device_id} 열기 실패")
-            raise RuntimeError("웹캠 열기 실패")
+        # ── 웹캠 열기 (자동 폴백: 지정 ID 실패 시 0/1/2 순차 시도) ──
+        # 환경에 따라 카메라가 /dev/video0 또는 /dev/video1 에 매핑됨
+        # (메타데이터 디바이스가 0번이고 실제 카메라가 1번인 케이스 등)
+        candidates = [device_id] + [d for d in (0, 1, 2) if d != device_id]
+        self.cap = None
+        self.device_id_used = None
+        for d in candidates:
+            print(f"[camera_node] /dev/video{d} 시도...")
+            cap = cv2.VideoCapture(d)
+            if not cap.isOpened():
+                print(f"  [SKIP] /dev/video{d} 열기 실패")
+                cap.release()
+                continue
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
+            cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+            # 프레임 검증 (밝기 1 이상이어야 정상)
+            for _ in range(5):
+                cap.read()
+            ret, frame = cap.read()
+            if not ret or frame is None or float(frame.mean()) < 1.0:
+                br = f"{float(frame.mean()):.1f}" if ret and frame is not None else "N/A"
+                print(f"  [SKIP] /dev/video{d} 빈/검은 프레임 (밝기={br})")
+                cap.release()
+                continue
+            print(f"  [OK] /dev/video{d} 채택 (밝기={float(frame.mean()):.0f})")
+            self.cap = cap
+            self.device_id_used = d
+            break
 
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
-        self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
-        print(f"  [OK] 웹캠 열림")
+        if self.cap is None:
+            raise RuntimeError("사용 가능한 웹캠 없음 (/dev/video 0/1/2 모두 실패)")
 
         # ── ROS 퍼블리셔 (BEST_EFFORT QoS) ───────────────
         qos = QoSProfile(
