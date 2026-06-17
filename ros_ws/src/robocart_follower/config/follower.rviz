@@ -1,0 +1,25 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Image
+      Name: Camera (raw)
+      Enabled: true
+      Image Topic:
+        Value: /robocart/image_raw/compressed
+        Reliability Policy: Best Effort
+      Transport Hint: compressed
+    - Class: rviz_default_plugins/Image
+      Name: Detections (overlay)
+      Enabled: true
+      Image Topic:
+        Value: /robocart/image_overlay/compressed
+        Reliability Policy: Best Effort
+      Transport Hint: compressed
+  Global Options:
+    Fixed Frame: camera
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true

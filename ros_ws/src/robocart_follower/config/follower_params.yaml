@@ -1,0 +1,40 @@
+# RoboCart 사람 추종 설정값 (튜닝 가능)
+
+# ── 카메라 노드 (RPi4) ──────────────────────────────
+camera_node:
+  ros__parameters:
+    device_id: 0              # /dev/videoN
+    width: 640
+    height: 480
+    fps_target: 30
+    jpeg_quality: 70          # 1~100 (낮을수록 작고 화질↓)
+    publish_topic: "/robocart/image_raw/compressed"
+
+# ── 추론 노드 (VM) ──────────────────────────────────
+inference_node:
+  ros__parameters:
+    yolo_model: "yolov8n.pt"
+    conf_threshold: 0.45      # 사람으로 인정할 최소 confidence
+    image_topic:    "/robocart/image_raw/compressed"
+    overlay_topic:  "/robocart/image_overlay/compressed"
+    features_path:  "/tmp/robocart_features.json"
+    motor_host:     "192.168.0.67"   # RPi4 IP (운영 시 실제 IP)
+    motor_port:     9999
+    dry_run_socket: false
+    lost_timeout_sec: 1.0
+
+# ── 모터 노드 (RPi4) ────────────────────────────────
+motor_node:
+  ros__parameters:
+    listen_host: "0.0.0.0"
+    listen_port: 9999
+    serial_port: "/dev/ttyUSB0"      # ESP32 — 환경에 맞게 (ttyACM0 가능)
+    serial_baud: 115200
+    dry_run: false                   # true면 시리얼 미사용 (콘솔만)
+    image_width: 640
+    hfov_deg: 60.0                   # 카메라 수평 화각 (C920 정도면 60~70)
+    center_deg: 90.0
+    gain: 0.5                        # 떨림이 있으면 ↓, 반응이 느리면 ↑
+    dead_zone_px: 40                 # 중앙 ±40 px 무시
+    min_deg: 10.0
+    max_deg: 170.0
