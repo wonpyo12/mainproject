@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robocart_follower</name>
+  <version>0.1.0</version>
+  <description>
+    RoboCart 사람 추종 시스템 (경량 분산 처리)
+    - RPi4: 웹캠 캡처 + ESP32 서보 제어
+    - VM: YOLOv8n 추론 + 특징 매칭
+    - 통신: ROS 토픽(영상) + Socket(명령)
+  </description>
+  <maintainer email="jinnnih@gmail.com">HJ</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
