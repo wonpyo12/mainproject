@@ -28,6 +28,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Empty
 
 from .features import (
     KEEP_THRESHOLD,
@@ -113,12 +114,16 @@ class InferenceNode(Node):
         else:
             print("  [INFO] dry_run_socket=True → 소켓 송신 안 함")
 
-        # ── 키 입력 (등록 트리거) ────────────────────────
-        # OpenCV 창 표시 (등록용)
-        self._show_window = True
+        # ── 등록/리셋 트리거 토픽 (RViz와 함께 쓰는 헤드리스 모드) ───
         self._reg_request = False
+        self.create_subscription(Empty, "/robocart/register", self._on_register_cmd, 1)
+        self.create_subscription(Empty, "/robocart/reset",    self._on_reset_cmd,    1)
+        print("  [OK] 등록/리셋 명령 토픽 구독")
+        print("       등록: ros2 topic pub /robocart/register std_msgs/Empty {} --once")
+        print("       리셋: ros2 topic pub /robocart/reset    std_msgs/Empty {} --once")
+        print("       시각화: rviz2  →  Image(/robocart/image_overlay/compressed)")
 
-        print("[inference_node] 준비 완료. R=등록, Q=종료")
+        print("[inference_node] 준비 완료 (Ctrl+C 종료)")
 
     # ════════════════════════════════════════════════════
     # 소켓: motor_node 로 접속/재접속
@@ -166,17 +171,7 @@ class InferenceNode(Node):
         arr = np.frombuffer(msg.data, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
-            print("[DEBUG] imdecode → None (디코드 실패)")
             return
-
-        # [임시 디버그] 첫 프레임 저장 + 30 프레임마다 통계 출력
-        if not getattr(self, "_dbg_saved", False):
-            cv2.imwrite("/tmp/recv_test.jpg", frame)
-            self._dbg_saved = True
-            print(f"[DEBUG] 첫 프레임 저장 → /tmp/recv_test.jpg  shape={frame.shape}  mean={frame.mean():.0f}")
-        self._dbg_count = getattr(self, "_dbg_count", 0) + 1
-        if self._dbg_count % 30 == 0:
-            print(f"[DEBUG] 누적 {self._dbg_count}프레임  mean={frame.mean():.0f}")
 
         # YOLO 추론 (사람만)
         results = self.yolo.predict(
@@ -214,22 +209,8 @@ class InferenceNode(Node):
         else:
             self._track_step(frame, boxes, w)
 
-        # 오버레이 발행
+        # 오버레이 발행 (RViz에서 /robocart/image_overlay/compressed 로 시각화)
         self._publish_overlay(frame)
-
-        # 로컬 창 (등록용 키 입력)
-        if self._show_window:
-            try:
-                cv2.imshow("RoboCart Follower (R=등록 Q=종료)", frame)
-                k = cv2.waitKey(1) & 0xFF
-                if k == ord("r") or k == ord("R"):
-                    print("[inference_node] R 입력 → 등록 요청")
-                    self._reg_request = True
-                    self.mode = "register"
-                elif k == ord("q") or k == ord("Q"):
-                    rclpy.shutdown()
-            except cv2.error:
-                self._show_window = False   # GUI 없는 환경
 
     # ════════════════════════════════════════════════════
     # 추종 단계
@@ -279,6 +260,23 @@ class InferenceNode(Node):
             x1, y1, x2, y2 = d["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), (180, 180, 180), 1)
 
+    # ════════════════════════════════════════════════════
+    # 등록/리셋 명령 콜백 (ros2 topic pub 으로 트리거)
+    # ════════════════════════════════════════════════════
+    def _on_register_cmd(self, _msg) -> None:
+        print("[inference_node] 등록 명령 수신 → 다음 프레임의 가장 큰 사람을 등록")
+        self._reg_request = True
+        self.mode = "register"
+
+    def _on_reset_cmd(self, _msg) -> None:
+        print("[inference_node] 리셋 명령 수신 → 등록 정보 삭제, 등록 모드 전환")
+        if self.feat_path.exists():
+            self.feat_path.unlink()
+        self.registered = None
+        self.locked = False
+        self.prev_cx = None
+        self.mode = "register"
+
     def _draw_register_overlay(self, frame, boxes: list[dict]) -> None:
         h, w = frame.shape[:2]
         cv2.putText(frame, "REGISTER MODE — press R when ready",
@@ -310,10 +308,6 @@ def main(args=None) -> None:
         print("\n[inference_node] Ctrl+C 종료")
     finally:
         if node is not None:
-            try:
-                cv2.destroyAllWindows()
-            except cv2.error:
-                pass
             node.destroy_node()
         rclpy.shutdown()
 

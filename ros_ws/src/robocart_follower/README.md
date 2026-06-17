@@ -60,13 +60,22 @@ rviz2 -d ~/ros_ws/install/robocart_follower/share/robocart_follower/config/follo
 
 ---
 
-## 사람 등록 방법
+## 사람 등록 방법 (RViz + ROS 토픽)
 
-추종 모드 처음 진입 시 등록 정보가 없으면 자동으로 **등록 모드**가 활성화된다.
-1. VM의 OpenCV 창을 본다.
-2. 추종할 사람이 카메라에 정면으로 보이도록 한다.
-3. 키보드 `R` 입력 → 가장 큰 사람의 특징을 `/tmp/robocart_features.json` 에 저장.
-4. 자동으로 **추종 모드** 전환. 이후부터는 저장된 특징과 매칭하여 추종.
+inference_node 는 GUI 창을 띄우지 않는다(헤드리스). 시각화는 RViz 의 Image 디스플레이에서 `/robocart/image_overlay/compressed` 를 본다.
+
+1. RViz 가 떠 있고 오버레이 영상이 보이면, 추종할 사람이 카메라 정면에 들어오게 한다.
+2. **별도 터미널**에서 등록 명령 한 줄을 발행한다:
+   ```bash
+   ros2 topic pub /robocart/register std_msgs/Empty "{}" --once
+   ```
+3. inference_node 콘솔에 `등록 명령 수신 → 다음 프레임의 가장 큰 사람을 등록` 로그가 뜨고, `/tmp/robocart_features.json` 에 특징 저장.
+4. 자동으로 **추종 모드** 전환. 박스가 노란색 → 초록색으로 바뀌고 `TRACK` 점수가 표시된다.
+
+### 등록 정보 초기화 (새 사람 다시 등록)
+```bash
+ros2 topic pub /robocart/reset std_msgs/Empty "{}" --once
+```
 
 특징(가중치 합 1.0):
 - HSV 색상 (상/하의)  60%
