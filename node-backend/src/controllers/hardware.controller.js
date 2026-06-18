@@ -235,7 +235,7 @@ function parseCartFromRedis(cartRaw) {
 
 // ───────────────────────────────────────────────
 // GET /api/hardware/video-feed
-// 실시간 카메라 MJPEG 스트림 프록시
+// 실시간 카메라 MJPEG 스트림 프록시 (크래시 방지 처리)
 // ───────────────────────────────────────────────
 const videoFeed = (req, res) => {
   const proxyReq = http.request(
@@ -246,6 +246,16 @@ const videoFeed = (req, res) => {
       method: 'GET',
     },
     (proxyRes) => {
+      // 수신 스트림 에러 핸들링 (파이썬 서버 종료 시 크래시 방지)
+      proxyRes.on('error', (err) => {
+        console.error('[Video Feed Proxy Response Error]:', err.message);
+      });
+
+      // 클라이언트 응답 스트림 에러 핸들링
+      res.on('error', (err) => {
+        console.error('[Video Feed Client Response Error]:', err.message);
+      });
+
       // 헤더 및 상태 코드 그대로 클라이언트로 포워딩
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
@@ -253,11 +263,13 @@ const videoFeed = (req, res) => {
   );
 
   proxyReq.on('error', (err) => {
-    console.error('[Video Feed Proxy Error]:', err.message);
-    res.status(502).send('카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. 시뮬레이터가 켜져 있는지 확인하세요.');
+    console.error('[Video Feed Proxy Request Error]:', err.message);
+    if (!res.headersSent) {
+      res.status(502).send('카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. 시뮬레이터가 켜져 있는지 확인하세요.');
+    }
   });
 
-  // 클라이언트가 연결을 끊으면 프록시 요청도 파괴
+  // 클라이언트가 연결을 끊으면 프록시 요청도 즉시 파괴
   req.on('close', () => {
     proxyReq.destroy();
   });
