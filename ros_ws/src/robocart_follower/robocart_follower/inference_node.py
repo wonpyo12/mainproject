@@ -25,6 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import rclpy
+import torch
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage, Image as RosImage
@@ -52,12 +53,32 @@ from .features import (
 )
 
 
-# YOLO 로드는 import 비용이 커서 모듈 레벨로 두지 않고 lazy import
+# YOLO/OSNet 로드는 import 비용이 커서 모듈 레벨로 두지 않고 lazy import
 def _load_yolo(model_name: str):
     """YOLO 모델 로드 (사전학습 가중치 자동 다운로드)."""
     print(f"[inference_node] YOLO 로딩: {model_name} ...")
     from ultralytics import YOLO   # type: ignore
     return YOLO(model_name)
+
+
+def _load_reid():
+    """OSNet ReID 모델 로드 (사전학습 가중치 수동 다운로드)."""
+    try:
+        from .osnet import osnet_x0_25
+        print("[inference_node] OSNet ReID 로딩...")
+        model = osnet_x0_25(num_classes=1, pretrained=False, loss='softmax')
+        ckpt_path = Path.home() / ".cache/torch/checkpoints/osnet_x0_25_imagenet.pth"
+        if not ckpt_path.exists():
+            print(f"[WARNING] 가중치 파일 없음: {ckpt_path}")
+            print("  다운로드: https://drive.google.com/uc?id=1rb8UN5ZzPKRc_xvtHlyDh-cSz88YX9hs")
+            return None
+        state = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(state, strict=False)
+        model.eval()
+        return model
+    except Exception as e:
+        print(f"[WARNING] OSNet 로드 실패: {e}")
+        return None
 
 
 class InferenceNode(Node):
@@ -92,6 +113,13 @@ class InferenceNode(Node):
         # ── YOLO 로드 ────────────────────────────────────
         self.yolo = _load_yolo(self.get_parameter("yolo_model").value)
         print("  [OK] YOLO 준비 완료")
+
+        # ── OSNet ReID 로드 ───────────────────────────────
+        self.reid_model = _load_reid()
+        if self.reid_model is not None:
+            print("  [OK] OSNet ReID 준비 완료")
+        else:
+            print("  [INFO] OSNet ReID 미사용 (HSV만으로 동작)")
 
         # ── 등록된 특징 로드 ─────────────────────────────
         self.registered = load_features(self.feat_path)
@@ -239,7 +267,7 @@ class InferenceNode(Node):
                 # 가장 큰 박스 선택
                 largest = max(boxes, key=lambda d: (d["bbox"][2] - d["bbox"][0]) *
                                                     (d["bbox"][3] - d["bbox"][1]))
-                feat = extract_features(frame, largest["bbox"])
+                feat = extract_features(frame, largest["bbox"], reid_model=self.reid_model)
                 if feat is not None:
                     save_features(feat, self.feat_path)
                     self.registered = feat
@@ -263,7 +291,7 @@ class InferenceNode(Node):
         best = None   # (score, bbox)
         if self.registered is not None:
             for d in boxes:
-                cf = extract_features(frame, d["bbox"])
+                cf = extract_features(frame, d["bbox"], reid_model=self.reid_model)
                 if cf is None:
                     continue
                 s = compare_features(self.registered, cf, prev_cx=self.prev_cx)
