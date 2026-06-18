@@ -1,14 +1,13 @@
 """
 사람 특징 추출 및 매칭 모듈 (경량)
 
-다른 팀원의 무거운 방식(ResNet50 + MediaPipe)과 달리,
-순수 OpenCV 연산만으로 빠르게 특징 추출/비교.
+OpenCV HSV 히스토그램 + OSNet ReID 딥러닝 임베딩 조합.
 
 특징 가중치 (합 = 1.0):
-  - HSV 색상 (상/하의 분리)  60%
-  - 머리 영역 색상            20%
-  - bbox 가로/세로 비율       10%
-  - 위치 연속성 (이전 프레임) 10%
+  - ReID 임베딩 (256차원)     60%
+  - HSV 색상 (상/하의)        20%
+  - 위치 연속성               15%
+  - bbox 가로/세로 비율        5%
 """
 from __future__ import annotations
 
@@ -23,11 +22,11 @@ import numpy as np
 MATCH_THRESHOLD = 0.72   # 새 사람을 추종 대상으로 잠금
 KEEP_THRESHOLD  = 0.60   # 잠금 유지 (이 아래로 떨어지면 lost)
 
-# 가중치 (합 = 1.0)
-W_COLOR    = 0.60
-W_HAIR     = 0.20
-W_SHAPE    = 0.10
-W_POSITION = 0.10
+# 가중치 (합 = 1.0) — ReID 중심 (60%) + HSV 보조 (20%) + 위치(15%) + 체형(5%)
+W_REID     = 0.60
+W_COLOR    = 0.20
+W_POSITION = 0.15
+W_SHAPE    = 0.05
 
 # 색상 히스토그램 bin 수 (작을수록 빠르지만 거칠어짐)
 HIST_BINS_H = 16   # Hue
@@ -56,11 +55,12 @@ def _hsv_hist(bgr_crop: np.ndarray) -> np.ndarray:
     return hist.flatten()
 
 
-def extract_features(image: np.ndarray, bbox: tuple[int, int, int, int]) -> dict | None:
+def extract_features(image: np.ndarray, bbox: tuple[int, int, int, int], reid_model=None) -> dict | None:
     """
-    한 사람 bbox에서 특징 추출.
+    한 사람 bbox에서 특징 추출 (HSV + ReID 임베딩).
 
     bbox: (x1, y1, x2, y2) 픽셀 좌표
+    reid_model: osnet_x0_25 모델 (None이면 HSV만 추출)
     반환: 특징 dict (없으면 None)
     """
     x1, y1, x2, y2 = bbox
@@ -72,19 +72,32 @@ def extract_features(image: np.ndarray, bbox: tuple[int, int, int, int]) -> dict
     if bh < 40 or bw < 20:   # 너무 작은 박스는 무시
         return None
 
-    # 사람 영역 3분할: 머리(상단 15%) / 상의(15~55%) / 하의(55~100%)
-    head_y2  = int(bh * 0.15)
+    # 사람 영역 2분할: 상의(상단 55%) / 하의(55~100%)
     upper_y2 = int(bh * 0.55)
-
-    head_crop  = person[0:head_y2, :]
-    upper_crop = person[head_y2:upper_y2, :]
+    upper_crop = person[0:upper_y2, :]
     lower_crop = person[upper_y2:bh, :]
 
+    # ReID 임베딩 추출
+    reid_emb = None
+    if reid_model is not None:
+        try:
+            import torch
+            person_rgb = cv2.cvtColor(person, cv2.COLOR_BGR2RGB)
+            person_resized = cv2.resize(person_rgb, (128, 256))
+            person_norm = (person_resized.astype(np.float32) / 255.0 -
+                          np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
+            x = torch.from_numpy(person_norm.transpose(2, 0, 1)).unsqueeze(0).float()
+            with torch.no_grad():
+                feat_vec = reid_model(x)
+            reid_emb = feat_vec.squeeze(0).cpu().numpy().tolist()
+        except Exception:
+            reid_emb = None
+
     feat = {
-        "hist_head":  _hsv_hist(head_crop).tolist()  if head_crop.size  else None,
+        "reid_emb":   reid_emb,
         "hist_upper": _hsv_hist(upper_crop).tolist() if upper_crop.size else None,
         "hist_lower": _hsv_hist(lower_crop).tolist() if lower_crop.size else None,
-        "aspect":     bw / bh,   # 체형 (가로/세로 비)
+        "aspect":     bw / bh,
         "cx":         (x1 + x2) / 2,
         "cy":         (y1 + y2) / 2,
         "timestamp":  time.time(),
