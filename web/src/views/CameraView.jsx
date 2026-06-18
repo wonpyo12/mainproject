@@ -7,7 +7,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { STATUS } from '../data';
 
-export function CameraView({ robots = [] }) {
+export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
@@ -31,7 +31,10 @@ export function CameraView({ robots = [] }) {
       {/* 왼쪽: 카메라 실시간 영상 카드 */}
       <Card pad={0}>
         <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+          <h3 
+            onClick={onTitleClick}
+            style={{ fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, margin: 0, cursor: onTitleClick ? 'pointer' : 'default', userSelect: 'none' }}
+          >
             <span style={{ 
               display: 'inline-block', 
               width: 8, 
