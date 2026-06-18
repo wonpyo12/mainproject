@@ -167,13 +167,17 @@ class InferenceNode(Node):
         else:
             print("  [INFO] dry_run_socket=True → 소켓 송신 안 함")
 
-        # ── 등록/리셋 트리거 토픽 (RViz와 함께 쓰는 헤드리스 모드) ───
+        # ── 등록/리셋/대기 트리거 토픽 (RViz와 함께 쓰는 헤드리스 모드) ───
         self._reg_request = False
         self.create_subscription(Empty, "/robocart/register", self._on_register_cmd, 1)
         self.create_subscription(Empty, "/robocart/reset",    self._on_reset_cmd,    1)
-        print("  [OK] 등록/리셋 명령 토픽 구독")
+        self.create_subscription(Empty, "/robocart/wait",     self._on_wait_cmd,     1)
+        self.create_subscription(Empty, "/robocart/resume",   self._on_resume_cmd,   1)
+        print("  [OK] 등록/리셋/대기 명령 토픽 구독")
         print("       등록: ros2 topic pub /robocart/register std_msgs/Empty {} --once")
         print("       리셋: ros2 topic pub /robocart/reset    std_msgs/Empty {} --once")
+        print("       대기: ros2 topic pub /robocart/wait     std_msgs/Empty {} --once")
+        print("       재개: ros2 topic pub /robocart/resume   std_msgs/Empty {} --once")
         print("       시각화: rviz2  →  Image(/robocart/image_overlay/compressed)")
 
         print("[inference_node] 준비 완료 (Ctrl+C 종료)")
@@ -240,6 +244,12 @@ class InferenceNode(Node):
                 boxes.append({"bbox": (x1, y1, x2, y2), "score": score})
 
         h, w = frame.shape[:2]
+
+        # ── 대기 모드 ─────────────────────────────────
+        if self.mode == "wait":
+            self._draw_wait_overlay(frame, boxes)
+            self._publish_overlay(frame)
+            return
 
         # ── 등록 모드 ─────────────────────────────────
         if self.mode == "register":
@@ -357,6 +367,29 @@ class InferenceNode(Node):
     def _on_reset_cmd(self, _msg) -> None:
         self._do_reset(reason="수동 리셋 명령")
 
+    def _on_wait_cmd(self, _msg) -> None:
+        """대기 명령 → 등록 정보는 유지하고 추종만 일시 정지 + 모터 중앙 복귀."""
+        if self.registered is None:
+            print("[inference_node] 대기 명령 무시 — 등록된 사용자가 없음")
+            return
+        print("[inference_node] 대기 명령 수신 → 추종 정지, 모터 중앙 복귀")
+        self.mode = "wait"
+        self.locked = False
+        self.prev_cx = None
+        self.lost_since = None    # 자동 리셋 카운트다운 해제 (대기 중에는 사라져도 OK)
+        self._send({"type": "center"})
+
+    def _on_resume_cmd(self, _msg) -> None:
+        """대기 종료 → 등록된 사용자 즉시 재추종 (재등록 없이)."""
+        if self.mode != "wait":
+            print(f"[inference_node] 재개 명령 무시 — 현재 모드: {self.mode}")
+            return
+        if self.registered is None:
+            print("[inference_node] 재개 명령 무시 — 등록된 사용자가 없음")
+            return
+        print("[inference_node] 재개 명령 수신 → 추종 재개")
+        self.mode = "track"
+
     def _do_reset(self, reason: str) -> None:
         """등록 정보 삭제 + register mode 복귀 + 자동 등록 타이머 재시작."""
         print(f"[inference_node] {reason} → 등록 정보 삭제, 등록 모드 전환")
@@ -381,6 +414,14 @@ class InferenceNode(Node):
         for d in boxes:
             x1, y1, x2, y2 = d["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), 2)
+
+    def _draw_wait_overlay(self, frame, boxes: list[dict]) -> None:
+        """대기 모드: 사람 박스만 회색 + WAITING 표시 (추종/매칭 X)."""
+        cv2.putText(frame, "WAITING — press resume to continue",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 0), 2)
+        for d in boxes:
+            x1, y1, x2, y2 = d["bbox"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (180, 180, 180), 1)
 
     # ════════════════════════════════════════════════════
     def _publish_overlay(self, frame) -> None:
