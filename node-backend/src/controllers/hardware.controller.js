@@ -59,44 +59,119 @@ const qrScan = async (req, res) => {
 
 // ───────────────────────────────────────────────
 // POST /api/hardware/rfid
-// Body: { rfidTag: string, robotSerialNumber: string }
+// Body: { rfidTag: string (or uid), robotSerialNumber: string }
 // ───────────────────────────────────────────────
 const rfidScan = async (req, res) => {
-  const { rfidTag, robotSerialNumber } = req.body;
+  const rawTag = req.body.rfidTag || req.body.uid;
+  const { robotSerialNumber } = req.body;
 
-  if (!rfidTag || !robotSerialNumber) {
-    return res.status(400).json({ success: false, message: 'rfidTag와 robotSerialNumber가 필요합니다.' });
+  if (!rawTag || !robotSerialNumber) {
+    return res.status(400).json({ success: false, message: 'rfidTag(또는 uid)와 robotSerialNumber가 필요합니다.' });
   }
 
+  const tag = rawTag.trim().toUpperCase();
+
   try {
+    // [Redis] 2.5초 이내 동일 카드 중복 스캔 방지 (백엔드 디바운싱)
+    const debounceKey = `robot:last_scan:${robotSerialNumber}`;
+    const lastScan = await redis.hgetall(debounceKey);
+    const now = Date.now();
+
+    if (lastScan && lastScan.tag === tag) {
+      const lastScanTime = parseInt(lastScan.scannedAt, 10);
+      if (now - lastScanTime < 2500) {
+        console.log(`[Hardware -> Debounce] Ignored duplicate scan for tag: ${tag} within 2.5s`);
+        
+        // 업데이트된 장바구니 전체 조회하여 현재 화면 유지되도록 전송
+        const robotStatusKey = `robot:status:${robotSerialNumber}`;
+        const userId = await redis.hget(robotStatusKey, 'userId');
+        if (userId) {
+          const cartKey = `cart:${userId}:${robotSerialNumber}`;
+          const cartRaw   = await redis.hgetall(cartKey);
+          const cartItems = parseCartFromRedis(cartRaw);
+          const totalAmount = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
+          
+          const io = req.app.get('io');
+          io.to(`user:${userId}`).emit('cart:updated', {
+            items: cartItems,
+            totalAmount,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: '중복 스캔이 방지되었습니다.',
+          ignored: true
+        });
+      }
+    }
+
+    // 최신 스캔 기록 저장 (5초 TTL)
+    await redis.hmset(debounceKey, { tag, scannedAt: String(now) });
+    await redis.expire(debounceKey, 5);
+
     // [Redis] 로봇에 매칭된 유저 ID 조회
     const robotStatusKey = `robot:status:${robotSerialNumber}`;
     const userId = await redis.hget(robotStatusKey, 'userId');
+    
     if (!userId) {
-      return res.status(404).json({
-        success: false,
-        message: '매칭된 유저가 없습니다. QR 인증이 먼저 필요합니다.',
+      // [Fallback] 쇼핑 매칭된 유저가 없다면 관리자 상품 등록 대기열(Redis)로 임시 등록 후 Socket.io 전송
+      await redis.set('rfid:pending:admin', tag, 'EX', 30);
+
+      // [WebSocket] 관리자 룸에 RFID 태그 push
+      const io = req.app.get('io');
+      io.to('room:admin').emit('rfid:scanned', { uid: tag, scannedAt: new Date().toISOString() });
+
+      console.log(`[Hardware -> Admin] No active session. Routed RFID scan to admin pending registration: ${tag} from robot: ${robotSerialNumber}`);
+
+      return res.status(200).json({
+        success: true,
+        message: '매칭된 활성 쇼핑 유저가 없어 관리자 상품 등록 대기열로 전송되었습니다.',
+        uid: tag,
       });
     }
 
     // [MySQL] rfid_tag로 상품 정보 조회 (products 테이블)
     const [rows] = await pool.query(
-      'SELECT id, name, price, category FROM products WHERE rfid_tag = ?',
-      [rfidTag]
+      'SELECT id, name, price, category, stock FROM products WHERE rfid_tag = ?',
+      [tag]
     );
     if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: '등록되지 않은 RFID 태그입니다.' });
+      // [Fallback] 쇼핑 세션이 있더라도 DB에 존재하지 않는 신규 태그라면 등록 대기열(Redis)로 임시 등록 후 Socket.io 전송
+      await redis.set('rfid:pending:admin', tag, 'EX', 30);
+
+      // [WebSocket] 관리자 룸에 RFID 태그 push
+      const io = req.app.get('io');
+      io.to('room:admin').emit('rfid:scanned', { uid: tag, scannedAt: new Date().toISOString() });
+
+      console.log(`[Hardware -> Admin Fallback] Unregistered tag scanned during shopping session. Routed to admin: ${tag}`);
+
+      return res.status(200).json({
+        success: true,
+        message: '등록되지 않은 RFID 태그입니다. 관리자 등록 대기열로 전송되었습니다.',
+        uid: tag,
+      });
     }
 
     const product = rows[0];
     const cartKey = `cart:${userId}:${robotSerialNumber}`;
 
     // [Redis] 장바구니에 상품 추가/수량 증가
-    // 구조: HSET cart:{userId}:{serialNumber} {productId}_name  "상품명"
-    //                                          {productId}_price "1000"
-    //                                          {productId}_qty   "2"
     const existingQty = await redis.hget(cartKey, `${product.id}_qty`);
     const newQty = existingQty ? parseInt(existingQty, 10) + 1 : 1;
+
+    // [Stock Limit Check]
+    const dbStock = (product.stock !== null && product.stock !== undefined) ? Number(product.stock) : 0;
+    if (newQty > dbStock) {
+      console.log(`[Hardware] Stock limit exceeded for product: ${product.name}. Stock: ${dbStock}, Requested: ${newQty}`);
+      
+      const io = req.app.get('io');
+      io.to(`user:${userId}`).emit('cart:error', {
+        message: `${product.name}의 재고가 부족합니다. (남은 재고: ${dbStock}개)`
+      });
+      return res.status(400).json({ success: false, message: '재고가 부족합니다.' });
+    }
 
     await redis.hmset(cartKey, {
       [`${product.id}_name`]:  product.name,
