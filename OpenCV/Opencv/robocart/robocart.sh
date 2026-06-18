@@ -69,11 +69,17 @@ start() {
 
     echo "[start] PI_CAM_URL=$PI_CAM_URL"
     echo "[start] args=$* (없으면 기존 프로필로 추종)"
-    # setsid: 새 세션/프로세스그룹 리더 → $! 가 곧 PGID. stop 이 이 그룹만 정확히 정리.
-    # echo 1: 기존 프로필 있을 때 뜨는 '1/2/3' 프롬프트에 자동으로 1(기존 추종) 선택.
-    setsid bash -c "echo 1 | python3 robocart_main.py --mjpeg '$PI_CAM_URL' --web $*" \
+    # setsid 로 새 세션을 만들고, 그 안에서 'exec python3' 로 bash 를 python 으로 치환한다
+    #  → python 이 곧 세션/프로세스그룹 리더(PGID=PID). 그 PID 를 exec 직전에 $$ 로 PIDFILE
+    #    에 직접 기록하므로, 예전처럼 setsid/bash PID 와 실제 python PID 가 어긋나 자식이
+    #    그룹 밖 고아로 살아남는 일이 없다 → stop 이 'kill -그룹' 으로 한 번에 정리.
+    # '<<< 1' (herestring): 기존 프로필 프롬프트 '1/2/3' 에 1(기존 추종) 자동 입력.
+    #    예전 'echo 1 | python3' 파이프라인은 python 을 별도 그룹의 고아로 만들어 stop 이
+    #    놓쳤다(→ 8080 포트 잔존·재시작 충돌). 파이프 자식을 없애 그 문제를 제거한다.
+    rm -f "$PIDFILE"
+    setsid bash -c "echo \$\$ > '$PIDFILE'; exec python3 robocart_main.py --mjpeg '$PI_CAM_URL' --web $* <<< 1" \
         >"$LOG" 2>&1 &
-    echo $! > "$PIDFILE"
+    for _ in $(seq 1 20); do [ -s "$PIDFILE" ] && break; sleep 0.1; done
     sleep 1
     if is_running; then
         echo "[start] PID $(_pid)  로그:$LOG"
