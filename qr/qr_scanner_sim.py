@@ -49,10 +49,20 @@ while True:
     # 이미지 좌우 반전 (거울 모드, 시각적으로 편함)
     frame = cv2.flip(frame, 1)
     
-    # QR 코드 검출 및 디코딩
-    # 거울 모드로 뒤집힌 프레임에서도 OpenCV는 디코딩이 가능합니다.
+    # ── 중앙 스캔 영역 (ROI) 설정 ──
+    h, w, _ = frame.shape
+    box_size = 240  # 240x240 정사각 스캔 영역
+    x1 = int((w - box_size) / 2)
+    y1 = int((h - box_size) / 2)
+    x2 = x1 + box_size
+    y2 = y1 + box_size
+
+    # 해당 중앙 영역(ROI)만 크롭하여 QR 코드 스캔용으로 사용
+    roi = frame[y1:y2, x1:x2]
+
+    # QR 코드 검출 및 디코딩 (크롭된 영역 내에서만 검출)
     try:
-        data, bbox, _ = detector.detectAndDecode(frame)
+        data, bbox, _ = detector.detectAndDecode(roi)
     except Exception as e:
         data, bbox = "", None
 
@@ -91,14 +101,10 @@ while True:
             
         status_timer = time.time()  # 타이머 리셋
 
-    # Bounding Box가 검출되었을 경우 화면에 테두리 그리기
-    if bbox is not None and len(bbox) > 0:
-        # bbox의 자료형에 맞춰 좌표 파싱
-        pts = bbox[0].astype(int)
-        for i in range(len(pts)):
-            pt1 = tuple(pts[i])
-            pt2 = tuple(pts[(i + 1) % len(pts)])
-            cv2.line(frame, pt1, pt2, status_color, 3)
+    # ── 중앙 가이드 박스 테두리 (가벼운 흰색 실선 하나만 표시) ──
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+
 
     # 3초 동안 성공/실패 메시지를 보여준 뒤 다시 대기 상태로 복원
     if auth_status in ["SUCCESS", "FAILED"] and (time.time() - status_timer > 4.0):
