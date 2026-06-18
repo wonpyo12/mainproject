@@ -137,6 +137,21 @@ export default function App() {
     };
   }, []);
 
+  const handleDismissAlert = (index) => {
+    const alertToDismiss = alerts[index];
+    setAlerts((prev) => prev.filter((_, i) => i !== index));
+
+    // 만약 localStorage에 저장된 로그인 알림이라면, localStorage에서도 제거합니다.
+    if (alertToDismiss && alertToDismiss.level === 'info' && alertToDismiss.cart === 'SYSTEM') {
+      const saved = localStorage.getItem('cartpilot_login_alerts');
+      if (saved) {
+        const customAlerts = JSON.parse(saved);
+        const updated = customAlerts.filter(a => a.timestamp !== alertToDismiss.timestamp);
+        localStorage.setItem('cartpilot_login_alerts', JSON.stringify(updated));
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: 'var(--bg)', color: 'var(--text-2)' }}>
@@ -179,7 +194,7 @@ export default function App() {
   } else if (view === 'inventory') {
     body = <InventoryView inventory={inventory} />;
   } else if (view === 'alerts') {
-    body = <AlertsView alerts={alerts} />;
+    body = <AlertsView alerts={alerts} onDismiss={handleDismissAlert} />;
   } else if (view === 'members') {
     body = <MembersView />;
   } else {
