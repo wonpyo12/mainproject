@@ -197,7 +197,7 @@ def wait_key(delay: int) -> int:
 
 def destroy_windows() -> None:
     if not _web_enabled:
-        destroy_windows()
+        cv2.destroyAllWindows()
 
 
 def start_web_server(port: int = 8080, host: str = "0.0.0.0"):
@@ -283,6 +283,13 @@ SCORE_WINDOW       = 10     # 이동 평균 창
 REID_FLOOR         = 0.50   # ReID 최소 하한 (이 미만이면 무조건 비등록자)
 COLOR_FLOOR        = 0.35   # 색상 최소 하한 (옷 색상이 전혀 안 맞으면 거부)
 MIN_CONFIRM_FRAMES = 3      # 추종 시작 전 연속 매칭 프레임 수
+
+# ── 2단계 tracking-by-detection (KCF 경량 보간) ───────────────────────────────
+# 추종 중에는 무거운 검출(YOLO+ReID)을 매 프레임이 아니라 DETECT_INTERVAL 프레임마다만
+# 수행하고, 그 사이 프레임은 KCF로 bbox를 보간한다 → CPU 점유↓(VM 렉↓), 박스 움직임↑부드러움.
+# 신원 재확인은 검출 주기마다 ReID로 자동 수행된다.
+DETECT_INTERVAL = 6     # 추종 중 무거운 검출 제출 주기 (1=매 프레임, 비활성화)
+KCF_MAX_AGE     = 45    # KCF 단독 보간 허용 최대 프레임 (초과 시 신원 미확인으로 간주)
 
 _PoseLM = PoseLandmark
 
@@ -1285,6 +1292,63 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# KCF 경량 추적기 (무거운 검출 사이 프레임의 bbox 보간)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BoxTracker:
+    """KCF 단일 객체 추적기 래퍼.
+
+    무거운 검출(YOLO+ReID)이 새 결과를 내놓을 때 init()으로 대상 bbox에 재고정하고,
+    그 사이 프레임에서는 update()로 가볍게(수 ms) bbox를 추적해 화면 박스를 보간한다.
+    추적 실패/소실 시 ok=False 가 되어 메인 루프가 즉시 재검출하도록 유도한다.
+    """
+
+    def __init__(self) -> None:
+        self._t = None
+        self.ok = False
+
+    @staticmethod
+    def _create():
+        # cv2 4.5.1+ 는 cv2.TrackerKCF_create, 일부 빌드는 legacy 네임스페이스
+        if hasattr(cv2, "TrackerKCF_create"):
+            return cv2.TrackerKCF_create()
+        return cv2.legacy.TrackerKCF_create()
+
+    def init(self, frame: np.ndarray, bbox: tuple) -> bool:
+        x1, y1, x2, y2 = bbox
+        w, h = int(x2 - x1), int(y2 - y1)
+        if w <= 0 or h <= 0:
+            self.ok = False
+            return False
+        try:
+            self._t = self._create()
+            self._t.init(frame, (int(x1), int(y1), w, h))
+            self.ok = True
+        except Exception:
+            self._t = None
+            self.ok = False
+        return self.ok
+
+    def update(self, frame: np.ndarray) -> tuple | None:
+        """현재 프레임에서 추적된 bbox(x1,y1,x2,y2) 반환. 실패 시 None."""
+        if not self.ok or self._t is None:
+            return None
+        try:
+            ok, box = self._t.update(frame)
+        except Exception:
+            ok = False
+        if not ok:
+            self.ok = False
+            return None
+        x, y, w, h = box
+        return (int(x), int(y), int(x + w), int(y + h))
+
+    def deinit(self) -> None:
+        self._t = None
+        self.ok = False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 백그라운드 검출 워커 (YOLO + Pose + ReID 비동기 처리)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1304,6 +1368,7 @@ class DetectionWorker(threading.Thread):
         "best_detail": None,
         "best_ori":    "unknown",
         "feat":        None,
+        "seq":         -1,    # 새 검출 결과 식별용 (메인 루프가 KCF 재고정 판단)
     }
 
     def __init__(self, yolo, hog_fallback, pose, reid_model, profile) -> None:
@@ -1320,6 +1385,7 @@ class DetectionWorker(threading.Thread):
 
         self._out_lock = threading.Lock()
         self._out      = dict(self._EMPTY)
+        self._seq      = 0
 
         self._stop_flag = False
 
@@ -1349,6 +1415,8 @@ class DetectionWorker(threading.Thread):
                 time.sleep(0.005)
                 continue
             result = self._process(frame, last_bbox)
+            self._seq += 1
+            result["seq"] = self._seq
             with self._out_lock:
                 self._out = result
 
@@ -1431,6 +1499,14 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
     cur_ori    = "unknown"
     phases     = profile.get("phases", {})
 
+    # ── 2단계 tracking-by-detection 상태 ──
+    kcf         = BoxTracker()      # 무거운 검출 사이 프레임의 bbox 보간
+    last_seq    = -1               # 마지막으로 반영한 워커 결과 seq
+    kcf_age     = 0               # 마지막 검출 재고정 이후 KCF 단독 보간 프레임 수
+    track_total = 0.0             # 마지막 검출 매칭 점수 (보간 프레임 라벨용)
+    track_ori   = "unknown"        # 마지막 검출 방향
+    reg_det_bbox = None           # 등록자로 판정된 최신 '검출' bbox (회색 박스 제외용)
+
     print("=== 실시간 추종 ===  ESC: 종료\n")
 
     # 백그라운드 검출 워커 시작
@@ -1455,55 +1531,92 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             w_f     = frame.shape[1]
             hud_w   = min(210, max(120, w_f // 2))   # 좌상단 HUD 바 폭
 
-            # 현재 프레임을 워커에 제출 (논블로킹 — 이전 대기 프레임 덮어씀)
-            worker.submit(frame, tracker.last_bbox)
+            # ── 검출 제출 여부 결정 (2단계 tracking-by-detection) ─────────────
+            # 추종이 안정적이고 KCF가 살아있으면 DETECT_INTERVAL 프레임마다만 무거운
+            # 검출을 제출하고 그 사이는 KCF로 보간 → CPU 점유↓(VM 렉↓).
+            # 탐색·확인·소실·KCF실패 시엔 매 프레임 검출해 빠르게 (재)획득하고,
+            # KCF 단독 보간이 너무 오래되면(KCF_MAX_AGE) 매 프레임 검출로 신원 재확인.
+            interp_alive = tracker.is_tracking and kcf.ok
+            need_detect = (
+                not interp_alive
+                or kcf_age >= KCF_MAX_AGE
+                or frame_count % DETECT_INTERVAL == 0
+            )
+            if need_detect:
+                worker.submit(frame, tracker.last_bbox)
 
-            # 최신 검출 결과 가져오기 (논블로킹)
+            # 최신 검출 결과 (논블로킹). seq 변동 시에만 '새 검출'로 반영.
             det         = worker.get_result()
             bboxes      = det["bboxes"]
             bbox_scores = det["bbox_scores"]
-            best_bbox   = det["best_bbox"]
-            best_total  = det["best_total"]
-            best_detail = det["best_detail"]
-            best_ori    = det["best_ori"]
-            feat        = det["feat"]
+            fresh       = det["seq"] != last_seq
+            last_seq    = det["seq"]
 
-            # 비등록자 차단: ReID + 색상 둘 다 하한을 충족해야 매칭
-            reid_ok  = best_detail is not None and best_detail.get("reid",  0) >= REID_FLOOR
-            color_ok = best_detail is not None and best_detail.get("color", 0) >= COLOR_FLOOR
-            matched  = (best_bbox is not None and best_total >= MATCH_THRESHOLD
-                        and reid_ok and color_ok)
+            draw_bbox: tuple | None = None   # 이번 프레임에 그릴 등록자 박스
+            interp      = False              # KCF 보간 프레임 여부 (라벨 ~ 표기)
 
-            if matched:
-                tracker.update(True, best_bbox, best_total)
-                cur_scores = {**best_detail, "total": best_total}
-                cur_ori    = best_ori
+            if fresh:
+                # ── 무거운 검출 결과 도착 → 신원 (재)확인 + KCF 재고정 ──
+                best_bbox   = det["best_bbox"]
+                best_total  = det["best_total"]
+                best_detail = det["best_detail"]
+                best_ori    = det["best_ori"]
+                feat        = det["feat"]
 
-                x1, y1, x2, y2 = best_bbox
+                # 비등록자 차단: ReID + 색상 둘 다 하한을 충족해야 매칭
+                reid_ok  = best_detail is not None and best_detail.get("reid",  0) >= REID_FLOOR
+                color_ok = best_detail is not None and best_detail.get("color", 0) >= COLOR_FLOOR
+                matched  = (best_bbox is not None and best_total >= MATCH_THRESHOLD
+                            and reid_ok and color_ok)
+
+                if matched:
+                    tracker.update(True, best_bbox, best_total)
+                    cur_scores  = {**best_detail, "total": best_total}
+                    cur_ori     = best_ori
+                    track_total = best_total
+                    track_ori   = best_ori
+                    reg_det_bbox = best_bbox
+                    kcf.init(frame, best_bbox)   # 검출 위치에 KCF 재고정
+                    kcf_age = 0
+                    draw_bbox = best_bbox
+
+                    # 매우 높은 확신 구간에서만 EMA 프로필 갱신 (비등록자 드리프트 방지)
+                    if tracker.status == "tracking" and best_total >= 0.90 and feat is not None:
+                        update_profile_ema(phases[best_ori], feat, alpha=0.04)
+                        save_profile(profile, PROFILE_PATH)
+                else:
+                    tracker.update(False)
+                    kcf.deinit()
+                    reg_det_bbox = None
+            elif interp_alive:
+                # ── 검출 사이 프레임 → KCF로 박스 보간 ──
+                kb = kcf.update(frame)
+                kcf_age += 1
+                if kb is not None:
+                    tracker.last_bbox = kb       # 위치 연속성·소실 표시용 최신화
+                    draw_bbox = kb
+                    interp    = True
+
+            # ── 등록자 박스 그리기 (검출 또는 KCF 보간 위치) ──
+            if draw_bbox is not None:
+                x1, y1, x2, y2 = draw_bbox
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
-                label = f"{profile['user_id']} [{best_ori}] {best_total:.2f}"
+                mark  = "~" if interp else ""   # ~ : KCF 보간 프레임
+                label = f"{profile['user_id']} [{track_ori}] {track_total:.2f}{mark}"
                 (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
                 ty = max(th + 6, y1 - 8)
                 cv2.rectangle(frame, (x1, ty-th-4), (x1+tw+6, ty+2), (0, 200, 0), -1)
                 cv2.putText(frame, label, (x1+3, ty-2),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
-
-                # 매우 높은 확신 구간에서만 EMA 프로필 갱신 (비등록자 드리프트 방지)
-                if tracker.status == "tracking" and best_total >= 0.90 and feat is not None:
-                    update_profile_ema(phases[best_ori], feat, alpha=0.04)
-                    save_profile(profile, PROFILE_PATH)
-
-            else:
-                tracker.update(False)
-                if tracker.status.startswith("lost") and tracker.last_bbox:
-                    x1, y1, x2, y2 = tracker.last_bbox
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 140, 255), 2)
-                    cv2.putText(frame, tracker.status, (x1, max(18, y1-8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 140, 255), 2)
+            elif tracker.status.startswith("lost") and tracker.last_bbox:
+                x1, y1, x2, y2 = tracker.last_bbox
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 140, 255), 2)
+                cv2.putText(frame, tracker.status, (x1, max(18, y1-8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 140, 255), 2)
 
             # 비등록자 박스 (회색) — 등록자 박스와 중복 방지
             for bbox in bboxes:
-                if bbox == best_bbox and matched:
+                if bbox == reg_det_bbox:
                     continue
                 x1, y1, x2, y2 = bbox
                 sc = bbox_scores.get(bbox, 0.0)
@@ -1513,9 +1626,10 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
 
             # HUD (좌상단 작은 바 — 영상 위, 인물 가림 최소화)
             hud_c = (0, 255, 0) if tracker.is_tracking else (100, 100, 200)
+            mode  = "KCF" if interp else ("DET" if fresh else "-")
             cv2.rectangle(frame, (0, 0), (hud_w, 22), (0, 0, 0), -1)
             cv2.putText(frame,
-                        f"FPS:{fps:.0f} Cand:{len(bboxes)} {tracker.status.upper()}",
+                        f"FPS:{fps:.0f} {mode} Cand:{len(bboxes)} {tracker.status.upper()}",
                         (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, hud_c, 1)
 
             # 정보 패널을 영상 위가 아니라 '오른쪽 여백'에 배치 → 인물 안 가림
