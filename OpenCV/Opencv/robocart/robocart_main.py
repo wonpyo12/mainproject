@@ -37,8 +37,11 @@ from typing import Any
 
 import serial as _serial
 
-# ── ROS2 지원 (--ros2 플래그 활성화 시) ─────────────────────────────────────
-_USE_ROS2 = '--ros2' in sys.argv
+# ── ROS2 지원 (--ros2, 또는 --mjpeg/PI_CAM_URL 하이브리드에서 명령 발행용) ──────
+# --mjpeg(영상=HTTP) 모드도 명령은 ROS2로 보내므로 rclpy를 import 한다.
+# 또한 _USE_ROS2 가 True 면 ESP32 USB 시리얼(COM5) 직결을 열지 않는다(브리지가 담당).
+_USE_ROS2 = ('--ros2' in sys.argv or '--mjpeg' in sys.argv
+             or bool(os.environ.get('PI_CAM_URL')))
 _ROS2_AVAILABLE = False
 if _USE_ROS2:
     try:
@@ -113,10 +116,14 @@ except ImportError:
     _PIL_OK = False
 
 _KR_FONT_CANDIDATES = [
-    "C:/Windows/Fonts/malgun.ttf",   # 맑은 고딕
-    "C:/Windows/Fonts/gulim.ttc",    # 굴림
-    "C:/Windows/Fonts/batang.ttc",   # 바탕
+    "C:/Windows/Fonts/malgun.ttf",   # 맑은 고딕 (Windows)
+    "C:/Windows/Fonts/gulim.ttc",    # 굴림 (Windows)
+    "C:/Windows/Fonts/batang.ttc",   # 바탕 (Windows)
     "C:/Windows/Fonts/NanumGothic.ttf",
+    # ── 리눅스(VMware): sudo apt install fonts-nanum ──
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # 최후 폴백(한글X)
 ]
 _KR_FONT_PATH = next((p for p in _KR_FONT_CANDIDATES if os.path.exists(p)), None)
 _FONT_CACHE: dict = {}
@@ -152,6 +159,97 @@ def put_texts(frame: np.ndarray, items: list) -> None:
             cv2_y = y + size  # PIL top → cv2 baseline 보정
             cv2.putText(frame, text, (x, cv2_y),
                         cv2.FONT_HERSHEY_SIMPLEX, max(0.3, size / 36.0), bgr, 1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 웹 MJPEG 출력 (--web) — VMware 등에서 cv2.imshow 검은 창 문제 우회
+# ══════════════════════════════════════════════════════════════════════════════
+
+_web_enabled = False
+_web_lock = threading.Lock()
+_web_jpeg: bytes | None = None
+
+
+def _web_push(frame: np.ndarray) -> None:
+    """처리된 프레임을 JPEG로 인코딩해 웹 스트림 버퍼에 저장."""
+    global _web_jpeg
+    ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if ok:
+        with _web_lock:
+            _web_jpeg = jpeg.tobytes()
+
+
+def display(winname: str, frame: np.ndarray) -> None:
+    """--web 이면 브라우저(MJPEG)로, 아니면 cv2.imshow 로 출력."""
+    if _web_enabled:
+        _web_push(frame)
+    else:
+        cv2.imshow(winname, frame)
+
+
+def wait_key(delay: int) -> int:
+    """--web 이면 키 입력 없이 delay(ms)만큼 쉼(-1 반환), 아니면 cv2.waitKey."""
+    if _web_enabled:
+        time.sleep(max(delay, 1) / 1000.0)
+        return -1
+    return cv2.waitKey(delay)
+
+
+def destroy_windows() -> None:
+    if not _web_enabled:
+        destroy_windows()
+
+
+def start_web_server(port: int = 8080, host: str = "0.0.0.0"):
+    """MJPEG HTTP 서버를 백그라운드 스레드로 시작."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    page = ("""<!doctype html><html><head><meta charset="utf-8">
+<title>SmartCart</title>
+<style>body{background:#111;color:#eee;font-family:sans-serif;text-align:center}
+img{max-width:97vw;border:1px solid #444;margin-top:10px}</style></head>
+<body><h3>SmartCart - 실행 화면</h3>
+<img src="/stream"></body></html>""").encode("utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # 콘솔 접근 로그 억제
+            pass
+
+        def do_GET(self):
+            if self.path in ("/", "/index.html"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(page)
+                return
+            if self.path == "/stream":
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "multipart/x-mixed-replace; boundary=frame")
+                self.end_headers()
+                try:
+                    while True:
+                        with _web_lock:
+                            jpeg = _web_jpeg
+                        if jpeg is None:
+                            time.sleep(0.05)
+                            continue
+                        self.wfile.write(b"--frame\r\n")
+                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                        self.wfile.write(
+                            f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
+                        self.wfile.write(jpeg)
+                        self.wfile.write(b"\r\n")
+                        time.sleep(1 / 30)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            self.send_error(404)
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -249,6 +347,70 @@ if _ROS2_AVAILABLE:
             msg.data = cmd
             self._pub.publish(msg)
             self.get_logger().info(f'CMD → {cmd}')
+
+    class CmdPubNode(rclpy.node.Node):
+        """명령 전용 ROS2 노드 (영상은 HTTP로 받는 --mjpeg 하이브리드 모드용)."""
+
+        def __init__(self):
+            super().__init__('robocart_cmd')
+            self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
+            self.get_logger().info(f'명령 발행 시작  {ROS2_TOPIC_CMD}')
+
+        def publish_cmd(self, cmd: str) -> None:
+            msg = RosString()
+            msg.data = cmd
+            self._pub.publish(msg)
+            self.get_logger().info(f'CMD → {cmd}')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HTTP MJPEG 카메라 (--mjpeg) — 라즈베리파이 영상을 DDS 대신 HTTP로 직수신
+# ══════════════════════════════════════════════════════════════════════════════
+
+class HttpCamera:
+    """라즈베리파이 raspi_mjpeg_server.py 의 MJPEG 스트림을 TCP로 직접 수신.
+
+    별도 스레드가 계속 읽어 '최신 프레임만' 보관하므로(latest-only), 처리(YOLO)가
+    느려도 큐가 쌓이지 않고 항상 최신 화면을 본다 → "멈췄다 몰아보기" 방지.
+    get_frame() 인터페이스는 RobocartNode 와 동일해 그대로 호환된다.
+    """
+
+    def __init__(self, url: str):
+        self.url = url
+        self._frame: np.ndarray | None = None
+        self._lock = threading.Lock()
+        self._stop = False
+        self._cap = cv2.VideoCapture(url)
+        try:
+            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 내부 버퍼 최소화
+        except Exception:
+            pass
+        self._th = threading.Thread(target=self._loop, daemon=True)
+        self._th.start()
+
+    def _loop(self) -> None:
+        while not self._stop:
+            if not self._cap.isOpened():
+                time.sleep(0.5)
+                self._cap.open(self.url)   # 재연결 시도
+                continue
+            ok, f = self._cap.read()
+            if ok and f is not None:
+                with self._lock:
+                    self._frame = f
+            else:
+                time.sleep(0.01)
+
+    def get_frame(self) -> np.ndarray | None:
+        with self._lock:
+            return self._frame.copy() if self._frame is not None else None
+
+    def stop(self) -> None:
+        self._stop = True
+        try:
+            self._cap.release()
+        except Exception:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -947,6 +1109,8 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
         return ok, f if ok else None
 
     def _check_q() -> bool:
+        if _web_enabled:        # 웹 모드는 키 입력 없음 (취소는 Ctrl+C)
+            return False
         return cv2.waitKey(1) & 0xFF == ord("q")
 
     def _best_person(frame: np.ndarray):
@@ -1040,7 +1204,7 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                     put_texts(disp, [((20, 80), "사람을 찾는 중...", 22, (0, 80, 220))])
 
                 _draw_base(disp, stage_idx, slabel)
-                cv2.imshow("SmartCart - 사용자 등록", disp)
+                display("SmartCart - 사용자 등록", disp)
                 if _check_q():
                     print("등록 취소")
                     return False
@@ -1073,7 +1237,7 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                         put_texts(flash, [
                             ((wf//2 - 90, hf//2 - 20), "촬영 완료!", 46, (0, 255, 80)),
                         ])
-                        cv2.imshow("SmartCart - 사용자 등록", flash)
+                        display("SmartCart - 사용자 등록", flash)
                         if _check_q():
                             return False
 
@@ -1094,14 +1258,14 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                         ((wt//2 - 120, ht//2 - 20), next_label, 34, (0, 220, 255)),
                         ((wt//2 - 70,  ht//2 + 26), f"{left:.1f}초 후 시작", 22, (200, 200, 200)),
                     ])
-                    cv2.imshow("SmartCart - 사용자 등록", trans)
+                    display("SmartCart - 사용자 등록", trans)
                     if _check_q():
                         return False
 
     finally:
         if cap is not None:
             cap.release()
-        cv2.destroyAllWindows()
+        destroy_windows()
 
     if not all(samples[s] for s, _ in stages):
         print("등록 실패: 앞/뒤 촬영이 모두 필요합니다.")
@@ -1278,7 +1442,7 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             if ros2_node is not None:
                 frame = ros2_node.get_frame()
                 if frame is None:
-                    if cv2.waitKey(10) & 0xFF == 27:
+                    if wait_key(10) & 0xFF == 27:
                         break
                     continue
             else:
@@ -1289,7 +1453,7 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             frame_count += 1
             fps = frame_count / max(time.time() - t0, 1e-6)
             w_f     = frame.shape[1]
-            panel_x = w_f - panel_width
+            hud_w   = min(210, max(120, w_f // 2))   # 좌상단 HUD 바 폭
 
             # 현재 프레임을 워커에 제출 (논블로킹 — 이전 대기 프레임 덮어씀)
             worker.submit(frame, tracker.last_bbox)
@@ -1347,25 +1511,29 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
                 cv2.putText(frame, f"{sc:.2f}", (x1, max(18, y1-5)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.38, (95, 95, 95), 1)
 
-            # HUD
+            # HUD (좌상단 작은 바 — 영상 위, 인물 가림 최소화)
             hud_c = (0, 255, 0) if tracker.is_tracking else (100, 100, 200)
-            cv2.rectangle(frame, (0, 0), (panel_x, 34), (0, 0, 0), -1)
+            cv2.rectangle(frame, (0, 0), (hud_w, 22), (0, 0, 0), -1)
             cv2.putText(frame,
-                        f"FPS:{fps:.0f}  Cand:{len(bboxes)}  {tracker.status.upper()}",
-                        (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.56, hud_c, 2)
-            put_texts(frame, [((8, 36), "ESC: 종료", 14, (160, 160, 160))])
+                        f"FPS:{fps:.0f} Cand:{len(bboxes)} {tracker.status.upper()}",
+                        (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, hud_c, 1)
 
-            # 정보 패널
-            draw_panel(frame, panel_x, profile, cur_scores, cur_ori, tracker)
+            # 정보 패널을 영상 위가 아니라 '오른쪽 여백'에 배치 → 인물 안 가림
+            h_f = frame.shape[0]
+            canvas = np.zeros((h_f, w_f + panel_width, 3), np.uint8)
+            canvas[:, :w_f] = frame
+            draw_panel(canvas, w_f, profile, cur_scores, cur_ori, tracker)
 
-            cv2.imshow("SmartCart - 실시간 추종", frame)
-            if cv2.waitKey(1) & 0xFF == 27:
+            display("SmartCart - 실시간 추종", canvas)
+            if wait_key(1) & 0xFF == 27:
                 break
+    except KeyboardInterrupt:
+        print("\n[종료] 추종 중단 (Ctrl+C)")
     finally:
         worker.stop()
         if cap is not None:
             cap.release()
-        cv2.destroyAllWindows()
+        destroy_windows()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1380,11 +1548,20 @@ def parse_args():
     p.add_argument("--user-id",  default="owner_001",  help="등록 사용자 ID")
     p.add_argument("--ros2",     action="store_true",
                    help="ROS2 모드: 라즈베리파이 카메라 구독 + /robocart/cmd 발행")
+    p.add_argument("--mjpeg",    default=None, metavar="URL",
+                   help="하이브리드: 영상은 HTTP MJPEG로 직수신, 명령은 ROS2. "
+                        "미지정 시 환경변수 PI_CAM_URL 사용. "
+                        "예) http://192.168.0.67:8090/stream")
+    p.add_argument("--web",      action="store_true",
+                   help="cv2 창 대신 웹(MJPEG)으로 출력 (VMware 검은 창 우회)")
+    p.add_argument("--web-port", type=int, default=8080,
+                   help="웹 출력 포트 (기본 8080)")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    global _esp_ros_node, _web_enabled
 
     # Windows 콘솔 UTF-8 설정 (한글 print 깨짐 방지)
     if hasattr(sys.stdout, "reconfigure"):
@@ -1398,9 +1575,38 @@ def main() -> int:
     print("  YOLO + MediaPipe PoseLandmarker + ResNet50 ReID")
     print("=" * 58)
 
-    # ── ROS2 노드 초기화 ──────────────────────────────────────────────────────
+    # ── 웹 출력 모드 ──────────────────────────────────────────────────────────
+    if args.web:
+        _web_enabled = True
+        start_web_server(args.web_port)
+        print(f"\n[웹] 실행 화면: http://localhost:{args.web_port}  (브라우저에서 열기)")
+
+    # ── 카메라 입력 소스 + 명령 경로 결정 ──────────────────────────────────────
+    # ros2_node: register/track 에 넘길 '프레임 소스'(get_frame 제공). 이름은 호환 유지.
     ros2_node = None
-    if args.ros2:
+    mjpeg_url = args.mjpeg or os.environ.get("PI_CAM_URL")
+
+    if mjpeg_url:
+        # ── 하이브리드: 영상=HTTP MJPEG 직수신, 명령=ROS2 ──────────────────────
+        print(f"\n[영상] MJPEG HTTP 직수신: {mjpeg_url}")
+        ros2_node = HttpCamera(mjpeg_url)
+        if _ROS2_AVAILABLE:
+            import atexit
+            rclpy.init()
+            cmd_node = CmdPubNode()
+            _esp_ros_node = cmd_node
+            atexit.register(rclpy.shutdown)
+            executor = rclpy.executors.MultiThreadedExecutor()
+            executor.add_node(cmd_node)
+            threading.Thread(target=executor.spin, daemon=True,
+                             name="rclpy-spin").start()
+            print(f"[명령] ROS2 발행: {ROS2_TOPIC_CMD}\n")
+        else:
+            print("[명령] rclpy 없음 → 모터 명령 비활성(영상 인식만)")
+            print("       명령까지 쓰려면 source /opt/ros/humble/setup.bash 후 재실행\n")
+
+    elif args.ros2:
+        # ── ROS2 전용: 영상·명령 모두 DDS ─────────────────────────────────────
         if not _ROS2_AVAILABLE:
             print("\n[오류] rclpy를 찾을 수 없습니다.")
             print("  source /opt/ros/humble/setup.bash  후 재실행하세요.")
@@ -1408,7 +1614,6 @@ def main() -> int:
         import atexit
         rclpy.init()
         ros2_node = RobocartNode()
-        global _esp_ros_node
         _esp_ros_node = ros2_node
         atexit.register(rclpy.shutdown)
 
