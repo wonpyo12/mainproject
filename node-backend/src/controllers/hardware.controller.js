@@ -30,6 +30,10 @@ const qrScan = async (req, res) => {
     // [Redis] 1회용 토큰 즉시 삭제 (재사용 방지)
     await redis.del(qrKey);
 
+    // [Redis] 기존 장바구니 데이터 초기화 (새 쇼핑 세션 시작)
+    const cartKey = `cart:${userId}:${robotSerialNumber}`;
+    await redis.del(cartKey);
+
     // [Redis] 로봇 상태 캐시: robot:status:{serialNumber} = { userId, status, startedAt }
     const robotStatusKey = `robot:status:${robotSerialNumber}`;
     await redis.hmset(robotStatusKey, {
@@ -43,6 +47,13 @@ const qrScan = async (req, res) => {
     io.to(`user:${userId}`).emit('robot:matched', {
       robotSerialNumber,
       status: 'SHOPPING',
+    });
+
+    // [WebSocket] 장바구니 초기화(비어있음) 전송
+    io.to(`user:${userId}`).emit('cart:updated', {
+      items: [],
+      totalAmount: 0,
+      updatedAt: new Date().toISOString(),
     });
 
     return res.status(200).json({
