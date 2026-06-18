@@ -8,15 +8,19 @@ motor_node — RPi4용 모터 제어 노드 (소켓 서버 + ESP32 시리얼)
   - dry_run=True 면 시리얼 미연결도 동작 (콘솔 출력만)
 
 소켓 입력 (JSON, 줄바꿈 종료):
-  {"type":"track","x":320,"y":240,"score":0.83}
-  {"type":"lost"}
-  {"type":"center"}
+  {"type":"track","x":320,"y":240,"score":0.83}    # 카메라 서보 추적
+  {"type":"lost"}                                   # 사람 놓침 → 서보 탐색
+  {"type":"center"}                                 # 서보 중앙 복귀
+  {"type":"drive","linear":0.2,"angular":0.0}      # 바퀴 주행 (m/s, rad/s)
+  {"type":"stop"}                                   # 바퀴 정지
 
 ESP32 시리얼 명령 (115200bps, 줄바꿈 종료):
-  A<각도>   — 지정 각도로 이동
-  S         — 좌우 탐색 시작
-  H         — 탐색 정지
-  C         — 중앙 복귀
+  A<각도>            — 서보 지정 각도로 이동
+  S                  — 서보 좌우 탐색 시작
+  H                  — 서보 탐색 정지
+  C                  — 서보 중앙 복귀
+  D<linear>,<angular> — 바퀴 주행 (cm/s, deg/s 단위로 ×100 정수 송신)
+  X                  — 바퀴 정지
 """
 from __future__ import annotations
 
@@ -121,6 +125,14 @@ class MotorNode(Node):
             self._send_serial("C")
             self.cur_deg = self.center
             print("[motor_node] CENTER → 90°")
+        elif t == "drive":
+            linear  = float(payload.get("linear", 0.0))
+            angular = float(payload.get("angular", 0.0))
+            # 정수 변환: m/s → cm/s 정수, rad/s → 0.01rad/s 단위 정수 (펌웨어 파싱 용이)
+            self._send_serial(f"D{int(round(linear * 100))},{int(round(angular * 100))}")
+        elif t == "stop":
+            self._send_serial("X")
+            print("[motor_node] STOP → 바퀴 정지(X)")
         else:
             print(f"[motor_node] 알 수 없는 명령: {payload}")
 
@@ -198,7 +210,8 @@ class MotorNode(Node):
     # ════════════════════════════════════════════════════
     def destroy_node(self) -> bool:
         self._stop = True
-        self._send_serial("C")
+        self._send_serial("X")   # 바퀴 정지
+        self._send_serial("C")   # 서보 중앙 복귀
         if self.ser is not None:
             try:
                 self.ser.close()
