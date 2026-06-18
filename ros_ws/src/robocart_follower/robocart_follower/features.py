@@ -120,31 +120,41 @@ def _hist_similarity(h1: list | None, h2: list | None) -> float:
 def compare_features(saved: dict, current: dict, prev_cx: float | None = None) -> float:
     """
     저장된 특징과 현재 후보의 매칭 점수 (0~1).
+    ReID 임베딩이 주 식별 수단 (W_REID 60%).
 
     prev_cx: 이전 프레임의 추종 대상 중심 x (위치 연속성 계산용)
     """
-    # 1) 상의 색상
+    # 1) ReID 임베딩 코사인 유사도 (신규)
+    sim_reid = 0.0
+    saved_emb = saved.get("reid_emb")
+    curr_emb = current.get("reid_emb")
+    if saved_emb is not None and curr_emb is not None:
+        a = np.array(saved_emb, dtype=np.float32)
+        b = np.array(curr_emb, dtype=np.float32)
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        if denom > 1e-6:
+            sim_reid = float(np.dot(a, b) / denom)
+
+    # 2) 상의 색상
     sim_upper = _hist_similarity(saved.get("hist_upper"), current.get("hist_upper"))
-    # 2) 하의 색상
+    # 3) 하의 색상
     sim_lower = _hist_similarity(saved.get("hist_lower"), current.get("hist_lower"))
-    # 3) 머리 색상 (모자/머리)
-    sim_head  = _hist_similarity(saved.get("hist_head"), current.get("hist_head"))
     # 4) 체형 비율 (차이가 작을수록 점수 ↑)
     a_saved, a_curr = saved.get("aspect", 0.5), current.get("aspect", 0.5)
     sim_shape = max(0.0, 1.0 - abs(a_saved - a_curr) / max(a_saved, 0.1))
     # 5) 위치 연속성 (이전 프레임 중심과 가까울수록 ↑)
     if prev_cx is None:
-        sim_pos = 0.5   # 정보 없음 → 중립
+        sim_pos = 0.5
     else:
         dx = abs(current.get("cx", prev_cx) - prev_cx)
-        sim_pos = max(0.0, 1.0 - dx / 300.0)   # 300px 떨어지면 0점
+        sim_pos = max(0.0, 1.0 - dx / 300.0)
 
     # 상/하의 평균을 색상 점수로
     sim_color = (sim_upper + sim_lower) / 2
 
     score = (
+        W_REID     * sim_reid +
         W_COLOR    * sim_color +
-        W_HAIR     * sim_head +
         W_SHAPE    * sim_shape +
         W_POSITION * sim_pos
     )
