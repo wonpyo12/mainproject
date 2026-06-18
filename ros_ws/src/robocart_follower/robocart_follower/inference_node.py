@@ -98,6 +98,13 @@ class InferenceNode(Node):
         self.declare_parameter("lost_timeout_sec",       1.0)         # 사람 놓침 → lost 명령
         self.declare_parameter("auto_register_sec",      5.0)         # 등록 모드 N초 후 자동 등록 (0=비활성)
         self.declare_parameter("auto_reset_after_lost_sec", 10.0)     # 추종 대상 N초간 못 잡으면 자동 리셋 (0=비활성, 다음 손님용)
+        # ── 바퀴 주행 파라미터 (사람 추종 시 카트 몸체 이동) ───
+        self.declare_parameter("drive_enable",          True)         # 바퀴 주행 사용 여부
+        self.declare_parameter("forward_speed",         0.20)         # 전진 속도 (m/s)
+        self.declare_parameter("turn_speed",            0.50)         # 회전 속도 (rad/s)
+        self.declare_parameter("bbox_h_min_ratio",      0.30)         # 사람 박스 높이/화면 높이 < 이 값이면 전진 (멀다)
+        self.declare_parameter("bbox_h_max_ratio",      0.60)         # 사람 박스 높이/화면 높이 > 이 값이면 정지 (가깝다)
+        self.declare_parameter("turn_dead_zone_ratio",  0.25)         # 화면 가운데 좌우 N% 안이면 몸체 회전 안 함 (서보가 처리)
 
         self.conf_thr     = self.get_parameter("conf_threshold").value
         img_topic         = self.get_parameter("image_topic").value
@@ -109,6 +116,12 @@ class InferenceNode(Node):
         self.lost_to      = self.get_parameter("lost_timeout_sec").value
         self.auto_reg_sec   = float(self.get_parameter("auto_register_sec").value)
         self.auto_reset_sec = float(self.get_parameter("auto_reset_after_lost_sec").value)
+        self.drive_enable   = bool(self.get_parameter("drive_enable").value)
+        self.fwd_speed      = float(self.get_parameter("forward_speed").value)
+        self.turn_speed     = float(self.get_parameter("turn_speed").value)
+        self.bbox_h_min     = float(self.get_parameter("bbox_h_min_ratio").value)
+        self.bbox_h_max     = float(self.get_parameter("bbox_h_max_ratio").value)
+        self.turn_dz_ratio  = float(self.get_parameter("turn_dead_zone_ratio").value)
 
         # ── YOLO 로드 ────────────────────────────────────
         self.yolo = _load_yolo(self.get_parameter("yolo_model").value)
@@ -298,6 +311,7 @@ class InferenceNode(Node):
     # 추종 단계
     # ════════════════════════════════════════════════════
     def _track_step(self, frame, boxes: list[dict], w: int) -> None:
+        h = frame.shape[0]
         best = None   # (score, bbox)
         if self.registered is not None:
             for d in boxes:
@@ -318,12 +332,20 @@ class InferenceNode(Node):
                 self.lost_since = None       # 사람 다시 찾음 → 자동 리셋 카운트다운 취소
                 cx = (x1 + x2) / 2
                 cy = (y1 + y2) / 2
+                bbox_h = y2 - y1
                 self.prev_cx = cx
                 self._send({"type": "track", "x": int(cx), "y": int(cy), "score": round(score, 3)})
+                # 바퀴 주행 명령 (별도 송신)
+                if self.drive_enable:
+                    linear, angular = self._compute_drive(cx, bbox_h, w, h)
+                    self._send({"type": "drive", "linear": round(linear, 3), "angular": round(angular, 3)})
                 # 시각화 (초록)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
                 cv2.putText(frame, f"TRACK {score:.2f}", (x1, max(20, y1 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                if self.drive_enable:
+                    cv2.putText(frame, f"DRIVE lin={linear:+.2f} ang={angular:+.2f}",
+                                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 self._draw_other_boxes(frame, boxes, (x1, y1, x2, y2))
                 return
 
@@ -332,6 +354,8 @@ class InferenceNode(Node):
             self.locked = False
             self.prev_cx = None
             self._send({"type": "lost"})
+            if self.drive_enable:
+                self._send({"type": "stop"})    # 바퀴도 정지
             print("[inference_node] 사람 놓침 → lost 송신")
             if self.auto_reset_sec > 0:
                 self.lost_since = now
@@ -356,6 +380,35 @@ class InferenceNode(Node):
             x1, y1, x2, y2 = d["bbox"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), (180, 180, 180), 1)
 
+    def _compute_drive(self, cx: float, bbox_h: int, w: int, h: int) -> tuple[float, float]:
+        """사람 bbox 위치/크기 → 선속도(전진), 각속도(회전) 계산.
+
+        - bbox 높이/화면 높이 비율로 거리 추정 (작으면 멀어서 전진, 크면 가까워서 정지)
+        - bbox cx가 화면 가운데 데드존을 벗어나면 몸체 회전 (서보 한계 백업)
+        """
+        # 1) 선속도: 거리 기반 (bbox 높이 비율)
+        h_ratio = bbox_h / h if h > 0 else 0.0
+        if h_ratio < self.bbox_h_min:
+            linear = self.fwd_speed         # 사람 멀다 → 전진
+        elif h_ratio > self.bbox_h_max:
+            linear = 0.0                    # 사람 가깝다 → 정지 (후진은 안전상 비활성)
+        else:
+            linear = 0.0                    # 적정 거리
+
+        # 2) 각속도: 좌우 위치 기반 (가운데 데드존 안이면 서보가 처리)
+        center_x = w / 2.0
+        offset = cx - center_x
+        dead_zone_px = self.turn_dz_ratio * w / 2.0   # 화면 가운데 좌우 N% 안
+        if abs(offset) > dead_zone_px:
+            # 사람이 오른쪽이면 angular > 0 (반시계 → 카트가 우회전), 왼쪽이면 < 0
+            # ROS 표준: angular.z > 0 = 반시계, 본체 좌회전
+            # 사람이 우측이면 카트가 우회전해야 → angular < 0
+            angular = -self.turn_speed if offset > 0 else self.turn_speed
+        else:
+            angular = 0.0
+
+        return linear, angular
+
     # ════════════════════════════════════════════════════
     # 등록/리셋 명령 콜백 (ros2 topic pub 으로 트리거)
     # ════════════════════════════════════════════════════
@@ -378,6 +431,8 @@ class InferenceNode(Node):
         self.prev_cx = None
         self.lost_since = None    # 자동 리셋 카운트다운 해제 (대기 중에는 사라져도 OK)
         self._send({"type": "center"})
+        if self.drive_enable:
+            self._send({"type": "stop"})
 
     def _on_resume_cmd(self, _msg) -> None:
         """대기 종료 → 등록된 사용자 즉시 재추종 (재등록 없이)."""
