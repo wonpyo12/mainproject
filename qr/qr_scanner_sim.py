@@ -1,6 +1,74 @@
 import cv2
 import requests
 import time
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+
+# 스트리밍을 위한 카메라 프레임 공유 클래스
+class CameraState:
+    def __init__(self):
+        self.frame = None
+
+camera_state = CameraState()
+
+class CamHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/video_feed':
+            try:
+                self.send_response(200)
+                self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+            except Exception as e:
+                print(f"[CamServer Headers Error] {e}")
+                return
+
+            while True:
+                img_frame = camera_state.frame
+                if img_frame is None:
+                    time.sleep(0.03)
+                    continue
+                try:
+                    ret, jpeg = cv2.imencode('.jpg', img_frame)
+                    if not ret:
+                        time.sleep(0.01)
+                        continue
+                    
+                    # MJPEG 프레임 전송 (직접 바이트 출력으로 형식 정합성 준수)
+                    self.wfile.write(b'--frame\r\n')
+                    self.wfile.write(b'Content-Type: image/jpeg\r\n')
+                    self.wfile.write(f'Content-Length: {len(jpeg)}\r\n\r\n'.encode('utf-8'))
+                    self.wfile.write(jpeg.tobytes())
+                    self.wfile.write(b'\r\n')
+                    self.wfile.flush()  # 소켓 버퍼를 즉시 비워 프레임 송출
+                    time.sleep(0.05)  # 약 20fps 대역폭 제한
+                except (ConnectionResetError, BrokenPipeError):
+                    break
+                except Exception as e:
+                    print(f"[CamServer Error] {e}")
+                    break
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+def start_camera_server():
+    try:
+        server = ThreadedHTTPServer(('0.0.0.0', 5000), CamHandler)
+        print("[CamServer] 실시간 영상 스트리밍 서버가 포트 5000에서 시작되었습니다.")
+        server.serve_forever()
+    except Exception as e:
+        print(f"[CamServer] 서버 기동 실패: {e}")
+
+# 스트리밍 서버 백그라운드 스레드 기동
+threading.Thread(target=start_camera_server, daemon=True).start()
+
 
 # ===================================================================
 # [로봇 QR 스캐너 시뮬레이터]
@@ -119,6 +187,9 @@ while True:
 
     # 영상 출력 창 표시
     cv2.imshow("Robot QR Camera Scanner Sim", frame)
+
+    # 실시간 공유 프레임 업데이트 (웹 스트리밍용)
+    camera_state.frame = frame
 
     # 'q' 키를 누르면 루프 탈출 및 종료
     if cv2.waitKey(1) & 0xFF == ord('q'):

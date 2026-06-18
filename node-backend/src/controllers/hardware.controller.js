@@ -6,6 +6,8 @@
 // ===================================================================
 const pool  = require('../config/db');    // [MySQL]
 const redis = require('../config/redis'); // [Redis]
+const http  = require('http');            // [HTTP for proxying camera stream]
+
 
 // ───────────────────────────────────────────────
 // POST /api/hardware/qr-scan
@@ -231,4 +233,36 @@ function parseCartFromRedis(cartRaw) {
   return Object.values(items);
 }
 
-module.exports = { qrScan, rfidScan };
+// ───────────────────────────────────────────────
+// GET /api/hardware/video-feed
+// 실시간 카메라 MJPEG 스트림 프록시
+// ───────────────────────────────────────────────
+const videoFeed = (req, res) => {
+  const proxyReq = http.request(
+    {
+      host: '127.0.0.1',
+      port: 5000,
+      path: '/video_feed',
+      method: 'GET',
+    },
+    (proxyRes) => {
+      // 헤더 및 상태 코드 그대로 클라이언트로 포워딩
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  );
+
+  proxyReq.on('error', (err) => {
+    console.error('[Video Feed Proxy Error]:', err.message);
+    res.status(502).send('카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. 시뮬레이터가 켜져 있는지 확인하세요.');
+  });
+
+  // 클라이언트가 연결을 끊으면 프록시 요청도 파괴
+  req.on('close', () => {
+    proxyReq.destroy();
+  });
+
+  proxyReq.end();
+};
+
+module.exports = { qrScan, rfidScan, videoFeed };

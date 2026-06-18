@@ -7,6 +7,7 @@ import { InventoryView } from './views/InventoryView';
 import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
 import { MembersView } from './views/MembersView';
+import { CameraView } from './views/CameraView';
 import { fetchMockData } from './api';
 import { io } from 'socket.io-client';
 
@@ -15,6 +16,7 @@ const BACKEND_URL = 'http://localhost:3000';
 
 const NAV = [
   { id: 'dashboard', ko: '대시보드', en: 'Dashboard', icon: 'layout-dashboard' },
+  { id: 'camera', ko: '카메라 모니터링', en: 'Camera Monitor', icon: 'video' },
   { id: 'fleet', ko: '로봇 관리', en: 'Fleet', icon: 'bot' },
   { id: 'inventory', ko: '재고 / RFID', en: 'Inventory', icon: 'package' },
   { id: 'alerts', ko: '알림', en: 'Alerts', icon: 'bell' },
@@ -28,6 +30,7 @@ const NAV2 = [
 
 const TITLES = {
   dashboard: ['대시보드', '실시간 매장 운영 현황'],
+  camera: ['카메라 모니터링', '로봇 카메라 실시간 스트리밍 피드'],
   fleet: ['로봇 관리', '추종 카트 플릿 모니터링 · 제어'],
   inventory: ['재고 / RFID', 'RFID 태그 상품 마스터'],
   alerts: ['알림', '도난 방지 · 배터리 · 추적 이벤트'],
@@ -189,6 +192,8 @@ export default function App() {
   let body;
   if (view === 'dashboard') {
     body = <DashboardView selected={selected} setSelected={setSelected} robots={robots} alerts={alerts} sessions={sessions} metrics={metrics} />;
+  } else if (view === 'camera') {
+    body = <CameraView robots={robots} />;
   } else if (view === 'fleet') {
     body = <FleetView selected={selected} setSelected={setSelected} robots={robots} />;
   } else if (view === 'inventory') {
