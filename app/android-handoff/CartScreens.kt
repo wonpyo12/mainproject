@@ -569,7 +569,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
             ) {
-                StatusCard(uiState) { viewModel.setTrackingState(it) }
+                StatusCard(uiState, onSet = { viewModel.setTrackingState(it) }, onReturn = { viewModel.completeOrder() })
                 Spacer(Modifier.height(20.dp))
                 SectionHeader("담은 상품 $count") {
                     Row(
@@ -622,7 +622,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
 }
 
 @Composable
-private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit) {
+private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit, onReturn: () -> Unit) {
     val following = uiState.trackingState == TrackingState.FOLLOWING
     val tone: Color; val toneInk: Color; val toneBg: Color; val icon: ImageVector; val label: String; val desc: String
     when (uiState.trackingState) {
@@ -662,12 +662,30 @@ private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit) {
         }
 
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(RadiusSm)).background(SurfaceAlt).padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            SegButton("추종 시작", Icons.Filled.PlayArrow, active = following, activeBg = Point, activeFg = OnPoint, modifier = Modifier.weight(1f)) { onSet(TrackingState.FOLLOWING) }
-            SegButton("정지", Icons.Filled.Pause, active = !following, activeBg = Ink, activeFg = Color.White, modifier = Modifier.weight(1f)) { onSet(TrackingState.PAUSED) }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (following) {
+                PrimaryButton(
+                    text = "정지",
+                    onClick = { onSet(TrackingState.PAUSED) },
+                    leadingIcon = Icons.Filled.Pause,
+                    outline = true,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                PrimaryButton(
+                    text = "추종 시작",
+                    onClick = { onSet(TrackingState.FOLLOWING) },
+                    leadingIcon = Icons.Filled.PlayArrow,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            PrimaryButton(
+                text = "복귀",
+                onClick = onReturn,
+                leadingIcon = Icons.Filled.Home,
+                outline = true,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
