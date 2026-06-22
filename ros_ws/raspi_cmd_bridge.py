@@ -52,15 +52,18 @@ class CmdSerialBridge(Node):
 
     def _open_serial(self) -> None:
         """ESP32 시리얼 포트 열기 (실패해도 노드는 살아있고, 명령 올 때 재시도)."""
-        try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=1)
-            time.sleep(2.0)  # ESP32 자동 리셋(부팅) 대기
-            self.get_logger().info(f"[시리얼] {self.port} 연결됨")
-        except serial.SerialException as e:
-            self.ser = None
-            self.get_logger().warn(
-                f"[시리얼] {self.port} 열기 실패: {e} — 명령 수신 시 재시도"
-            )
+        # [모터 제어 비활성화] 추후 주석 해제 예정 — 시리얼(모터) 연결 안 함
+        self.ser = None
+        return
+        # try:
+        #     self.ser = serial.Serial(self.port, self.baud, timeout=1)
+        #     time.sleep(2.0)  # ESP32 자동 리셋(부팅) 대기
+        #     self.get_logger().info(f"[시리얼] {self.port} 연결됨")
+        # except serial.SerialException as e:
+        #     self.ser = None
+        #     self.get_logger().warn(
+        #         f"[시리얼] {self.port} 열기 실패: {e} — 명령 수신 시 재시도"
+        #     )
 
     def on_cmd(self, msg: String) -> None:
         cmd = msg.data.strip()
@@ -68,23 +71,25 @@ class CmdSerialBridge(Node):
             self.get_logger().warn(f"[무시] 알 수 없는 명령: {cmd!r}")
             return
 
-        # 시리얼이 닫혀 있으면 재연결 시도
-        if self.ser is None or not self.ser.is_open:
-            self._open_serial()
-            if self.ser is None:
-                self.get_logger().error(f"[드롭] 시리얼 미연결 → {cmd} 전송 실패")
-                return
-
-        try:
-            self.ser.write((cmd + "\n").encode())
-            self.get_logger().info(f"CMD → ESP32: {cmd}")
-        except serial.SerialException as e:
-            self.get_logger().error(f"[시리얼] 전송 오류: {e} — 포트 닫고 재연결 예정")
-            try:
-                self.ser.close()
-            except Exception:
-                pass
-            self.ser = None
+        # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령은 수신/로그만 하고 ESP32로 전송 안 함
+        self.get_logger().info(f"CMD 수신(모터 비활성, 전송 안 함): {cmd}")
+        # # 시리얼이 닫혀 있으면 재연결 시도
+        # if self.ser is None or not self.ser.is_open:
+        #     self._open_serial()
+        #     if self.ser is None:
+        #         self.get_logger().error(f"[드롭] 시리얼 미연결 → {cmd} 전송 실패")
+        #         return
+        #
+        # try:
+        #     self.ser.write((cmd + "\n").encode())
+        #     self.get_logger().info(f"CMD → ESP32: {cmd}")
+        # except serial.SerialException as e:
+        #     self.get_logger().error(f"[시리얼] 전송 오류: {e} — 포트 닫고 재연결 예정")
+        #     try:
+        #         self.ser.close()
+        #     except Exception:
+        #         pass
+        #     self.ser = None
 
     def destroy_node(self) -> bool:
         if self.ser is not None and self.ser.is_open:
