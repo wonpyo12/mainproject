@@ -27,7 +27,7 @@ PIDFILE="/tmp/robocart.pid"
 LOG="/tmp/robocart_run.log"
 
 PI_CAM_URL="${PI_CAM_URL:-http://192.168.0.2:8090/stream}"
-export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"   # 라파/TurtleBot3 실제 설정값(42)에 맞춤
 
 _pid()       { cat "$PIDFILE" 2>/dev/null; }
 is_running() {

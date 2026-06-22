@@ -18,7 +18,7 @@
           <!-- 라즈베리파이 자신 -->
           <locator>
             <udpv4>
-              <address>192.168.0.67</address>
+              <address>192.168.0.2</address>
             </udpv4>
           </locator>
           <!-- 데스크탑 -->
