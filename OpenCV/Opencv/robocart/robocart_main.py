@@ -294,28 +294,32 @@ KCF_MAX_AGE     = 45    # KCF 단독 보간 허용 최대 프레임 (초과 시 
 _PoseLM = PoseLandmark
 
 # ── ESP32 시리얼 ──────────────────────────────────────────────────────────────
-ESP32_PORT = "COM5"   # 장치관리자에서 확인 후 변경
-ESP32_BAUD = 9600
+# [모터 제어 비활성화] 추후 주석 해제 예정. 모터 명령/시리얼 송신부만 주석 처리하고
+# 영상 인식·추종 로직은 그대로 둔다.
+# ESP32_PORT = "COM5"   # 장치관리자에서 확인 후 변경
+# ESP32_BAUD = 9600
 
-_esp: _serial.Serial | None = None
+_esp = None
 _esp_ros_node = None  # ROS2 모드에서 publish_cmd() 대상 노드
 
-if not _USE_ROS2:
-    try:
-        _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
-        print(f"[ESP32] 시리얼 연결됨: {ESP32_PORT}")
-    except Exception:
-        print(f"[ESP32] 시리얼 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
+# if not _USE_ROS2:
+#     try:
+#         _esp = _serial.Serial(ESP32_PORT, ESP32_BAUD, timeout=1)
+#         print(f"[ESP32] 시리얼 연결됨: {ESP32_PORT}")
+#     except Exception:
+#         print(f"[ESP32] 시리얼 연결 실패 ({ESP32_PORT}) — 모터 없이 실행")
 
 
 def _esp_send(cmd: str) -> None:
-    if _esp_ros_node is not None:
-        _esp_ros_node.publish_cmd(cmd)
-    elif _esp and _esp.is_open:
-        try:
-            _esp.write((cmd + "\n").encode())
-        except Exception:
-            pass
+    # [모터 제어 비활성화] 추후 주석 해제 예정 — 현재는 명령을 전송하지 않음(no-op)
+    return
+    # if _esp_ros_node is not None:
+    #     _esp_ros_node.publish_cmd(cmd)
+    # elif _esp and _esp.is_open:
+    #     try:
+    #         _esp.write((cmd + "\n").encode())
+    #     except Exception:
+    #         pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -333,7 +337,8 @@ if _ROS2_AVAILABLE:
 
             self._sub = self.create_subscription(
                 CompressedImage, ROS2_TOPIC_IMAGE, self._cb_image, 10)
-            self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
+            # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령 발행 퍼블리셔 생성 안 함
+            # self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
             self.get_logger().info(
                 f'시작  이미지={ROS2_TOPIC_IMAGE}  명령={ROS2_TOPIC_CMD}')
 
@@ -350,24 +355,29 @@ if _ROS2_AVAILABLE:
                         if self._latest_frame is not None else None)
 
         def publish_cmd(self, cmd: str) -> None:
-            msg = RosString()
-            msg.data = cmd
-            self._pub.publish(msg)
-            self.get_logger().info(f'CMD → {cmd}')
+            # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령 발행 안 함(no-op)
+            return
+            # msg = RosString()
+            # msg.data = cmd
+            # self._pub.publish(msg)
+            # self.get_logger().info(f'CMD → {cmd}')
 
     class CmdPubNode(rclpy.node.Node):
         """명령 전용 ROS2 노드 (영상은 HTTP로 받는 --mjpeg 하이브리드 모드용)."""
 
         def __init__(self):
             super().__init__('robocart_cmd')
-            self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
+            # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령 발행 퍼블리셔 생성 안 함
+            # self._pub = self.create_publisher(RosString, ROS2_TOPIC_CMD, 10)
             self.get_logger().info(f'명령 발행 시작  {ROS2_TOPIC_CMD}')
 
         def publish_cmd(self, cmd: str) -> None:
-            msg = RosString()
-            msg.data = cmd
-            self._pub.publish(msg)
-            self.get_logger().info(f'CMD → {cmd}')
+            # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령 발행 안 함(no-op)
+            return
+            # msg = RosString()
+            # msg.data = cmd
+            # self._pub.publish(msg)
+            # self.get_logger().info(f'CMD → {cmd}')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -883,8 +893,9 @@ class TrackingState:
         if matched and bbox is not None:
             if self._scanning:
                 self._scanning = False
-                _esp_send("SCAN_STOP")
-                _esp_send("CENTER")
+                # [모터 제어 비활성화] 추후 주석 해제 예정
+                # _esp_send("SCAN_STOP")
+                # _esp_send("CENTER")
             self._history.append(score)
             self.last_bbox = bbox
             self.lost_count = 0
@@ -919,7 +930,8 @@ class TrackingState:
                     self.status = "searching"
                     if not self._scanning:
                         self._scanning = True
-                        _esp_send("SCAN_START")
+                        # [모터 제어 비활성화] 추후 주석 해제 예정
+                        # _esp_send("SCAN_START")
                 else:
                     self.status = f"lost({self.lost_count}/{LOST_MAX})"
             else:
@@ -1482,7 +1494,7 @@ class DetectionWorker(threading.Thread):
 
 def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
                  reid_model, profile: dict, panel_width: int = 240,
-                 ros2_node=None) -> None:
+                 ros2_node=None, follower=None) -> None:
     if ros2_node is not None:
         cap = None
         print(f"[추종] ROS2 카메라 모드 — 토픽: {ROS2_TOPIC_IMAGE}")
@@ -1638,6 +1650,15 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
             canvas[:, :w_f] = frame
             draw_panel(canvas, w_f, profile, cur_scores, cur_ori, tracker)
 
+            # ── 바퀴 추종(--follow): 인식 bbox → /cmd_vel 발행 (별도 모듈) ──
+            # 추종 중이면 현재 박스로 속도 계산, 아니면 정지(안전). HUD에 v/w 표시.
+            if follower is not None:
+                v, w = follower.update(draw_bbox, w_f, frame.shape[0],
+                                       tracker.is_tracking)
+                cv2.putText(canvas, f"WHEEL v={v:+.2f} w={w:+.2f}",
+                            (w_f + 8, frame.shape[0] - 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
             display("SmartCart - 실시간 추종", canvas)
             if wait_key(1) & 0xFF == 27:
                 break
@@ -1645,6 +1666,8 @@ def run_tracking(yolo, hog_fallback, pose: PoseLandmarker,
         print("\n[종료] 추종 중단 (Ctrl+C)")
     finally:
         worker.stop()
+        if follower is not None:
+            follower.stop()          # 종료 시 반드시 정지 명령
         if cap is not None:
             cap.release()
         destroy_windows()
@@ -1665,11 +1688,14 @@ def parse_args():
     p.add_argument("--mjpeg",    default=None, metavar="URL",
                    help="하이브리드: 영상은 HTTP MJPEG로 직수신, 명령은 ROS2. "
                         "미지정 시 환경변수 PI_CAM_URL 사용. "
-                        "예) http://192.168.0.67:8090/stream")
+                        "예) http://192.168.0.2:8090/stream")
     p.add_argument("--web",      action="store_true",
                    help="cv2 창 대신 웹(MJPEG)으로 출력 (VMware 검은 창 우회)")
     p.add_argument("--web-port", type=int, default=8080,
                    help="웹 출력 포트 (기본 8080)")
+    p.add_argument("--follow",   action="store_true",
+                   help="바퀴 추종: 인식 결과(bbox)로 /cmd_vel(Twist) 발행 "
+                        "(TurtleBot3 Burger). wheel_control.py 사용")
     return p.parse_args()
 
 
@@ -1704,20 +1730,22 @@ def main() -> int:
         # ── 하이브리드: 영상=HTTP MJPEG 직수신, 명령=ROS2 ──────────────────────
         print(f"\n[영상] MJPEG HTTP 직수신: {mjpeg_url}")
         ros2_node = HttpCamera(mjpeg_url)
-        if _ROS2_AVAILABLE:
-            import atexit
-            rclpy.init()
-            cmd_node = CmdPubNode()
-            _esp_ros_node = cmd_node
-            atexit.register(rclpy.shutdown)
-            executor = rclpy.executors.MultiThreadedExecutor()
-            executor.add_node(cmd_node)
-            threading.Thread(target=executor.spin, daemon=True,
-                             name="rclpy-spin").start()
-            print(f"[명령] ROS2 발행: {ROS2_TOPIC_CMD}\n")
-        else:
-            print("[명령] rclpy 없음 → 모터 명령 비활성(영상 인식만)")
-            print("       명령까지 쓰려면 source /opt/ros/humble/setup.bash 후 재실행\n")
+        print("[명령] 모터 제어 비활성화 상태 — 명령 발행 안 함(영상 인식만)\n")
+        # [모터 제어 비활성화] 추후 주석 해제 예정 — ROS2 명령 발행 노드 비활성
+        # if _ROS2_AVAILABLE:
+        #     import atexit
+        #     rclpy.init()
+        #     cmd_node = CmdPubNode()
+        #     _esp_ros_node = cmd_node
+        #     atexit.register(rclpy.shutdown)
+        #     executor = rclpy.executors.MultiThreadedExecutor()
+        #     executor.add_node(cmd_node)
+        #     threading.Thread(target=executor.spin, daemon=True,
+        #                      name="rclpy-spin").start()
+        #     print(f"[명령] ROS2 발행: {ROS2_TOPIC_CMD}\n")
+        # else:
+        #     print("[명령] rclpy 없음 → 모터 명령 비활성(영상 인식만)")
+        #     print("       명령까지 쓰려면 source /opt/ros/humble/setup.bash 후 재실행\n")
 
     elif args.ros2:
         # ── ROS2 전용: 영상·명령 모두 DDS ─────────────────────────────────────
@@ -1728,7 +1756,8 @@ def main() -> int:
         import atexit
         rclpy.init()
         ros2_node = RobocartNode()
-        _esp_ros_node = ros2_node
+        # [모터 제어 비활성화] 추후 주석 해제 예정 — 명령 발행 대상 연결 안 함
+        # _esp_ros_node = ros2_node
         atexit.register(rclpy.shutdown)
 
         executor = rclpy.executors.MultiThreadedExecutor()
@@ -1796,10 +1825,23 @@ def main() -> int:
     print(f"사용자 [{profile['user_id']}] 로드 완료")
     print(f"등록 일시: {profile.get('registered_at', 'N/A')}\n")
 
+    # ── 바퀴 추종 제어 준비 (--follow) ─────────────────────────────────────────
+    # 인식 결과를 /cmd_vel(Twist)로 변환·발행. 카메라 pan 서보와 무관한 별도 경로.
+    follower = None
+    if args.follow:
+        try:
+            from wheel_control import WheelFollower
+            follower = WheelFollower()
+            print("[바퀴] 추종 제어 활성 — /cmd_vel 발행 (TurtleBot3 Burger)")
+        except Exception as e:
+            print(f"[바퀴] 추종 비활성: {e}")
+
     # ── 실시간 추종 ───────────────────────────────────────────────────────────
     run_tracking(yolo, hog_fallback, pose, reid_model, profile,
-                 ros2_node=ros2_node)
+                 ros2_node=ros2_node, follower=follower)
 
+    if follower is not None:
+        follower.destroy()
     pose.close()
     return 0
 
