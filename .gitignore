@@ -54,4 +54,23 @@ desktop.ini
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
+pnpm-debug.log*
+
+# ─── ROS2 / colcon 산출물 ─────────────────────
+ros_ws/build/
+ros_ws/install/
+ros_ws/log/
+
+# ─── Python ──────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# ─── SLAM 생성물 (지도는 별도 폴더로 관리, 자동 추적 X) ─
+ros_ws/src/robocart_navigation/maps/**/*.pgm
+ros_ws/src/robocart_navigation/maps/**/*.yaml
+!ros_ws/src/robocart_navigation/maps/.gitkeep
+
