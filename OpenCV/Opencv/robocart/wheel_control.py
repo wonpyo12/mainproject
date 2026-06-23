@@ -121,6 +121,9 @@ class WheelFollower:
         # 하드 한계 재클램프 (어떤 경로로 들어와도 Burger 한계 초과 금지)
         v = _clamp(v, -BURGER_MAX_LIN, BURGER_MAX_LIN)
         w = _clamp(w, -BURGER_MAX_ANG, BURGER_MAX_ANG)
+        # 실차 확인 결과 좌우 회전이 REP103 기준과 반대로 동작(하드웨어/펌웨어 쪽 부호
+        # 관례 차이) → 발행 직전 단 한 곳에서 반전. compute()/--test 어느 경로든 동일하게 적용됨.
+        w = -w
         msg = Twist()
         msg.linear.x = float(v)
         msg.angular.z = float(w)
