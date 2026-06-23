@@ -1,0 +1,8 @@
+mode_controller:
+  ros__parameters:
+    home_pose:
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
+
+    nav_action_name: navigate_to_pose

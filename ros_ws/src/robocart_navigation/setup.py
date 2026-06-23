@@ -12,9 +12,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', [
             'launch/autonomous_mapping.launch.py',
+            'launch/wait_return.launch.py',
         ]),
         ('share/' + package_name + '/config', [
             'config/explore_params.yaml',
+            'config/return_params.yaml',
         ]),
         ('share/' + package_name + '/scripts', [
             'scripts/save_map.sh',
@@ -28,6 +30,8 @@ setup(
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'mode_controller = robocart_navigation.mode_controller:main',
+        ],
     },
 )
