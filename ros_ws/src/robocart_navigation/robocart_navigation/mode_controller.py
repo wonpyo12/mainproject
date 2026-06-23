@@ -19,6 +19,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from action_msgs.msg import GoalStatus
 from std_msgs.msg import Empty
 from geometry_msgs.msg import PoseStamped, Quaternion
 from nav2_msgs.action import NavigateToPose
@@ -49,6 +50,9 @@ class ModeController(Node):
         self.create_subscription(Empty, "/robocart/return", self._on_return, 1)
         self.create_subscription(Empty, "/robocart/wait",   self._on_cancel, 1)
         self.create_subscription(Empty, "/robocart/resume", self._on_cancel, 1)
+
+        # Nav2 도착 시 follower 자동 reset → 다음 손님 등록 모드로
+        self._reset_pub = self.create_publisher(Empty, "/robocart/reset", 1)
 
         self.get_logger().info(
             "mode_controller 준비 — /robocart/return 대기 "
@@ -91,8 +95,12 @@ class ModeController(Node):
 
     def _on_result(self, future) -> None:
         status = future.result().status
-        self.get_logger().info(f"복귀 종료 (status={status})")
         self._goal_handle = None
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info("도킹 도착 → follower reset 발행")
+            self._reset_pub.publish(Empty())
+        else:
+            self.get_logger().info(f"복귀 종료 (status={status}, reset 안 함)")
 
     def _on_cancel(self, _msg: Empty) -> None:
         if self._goal_handle is None:

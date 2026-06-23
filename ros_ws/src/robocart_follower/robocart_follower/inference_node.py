@@ -180,17 +180,19 @@ class InferenceNode(Node):
         else:
             print("  [INFO] dry_run_socket=True → 소켓 송신 안 함")
 
-        # ── 등록/리셋/대기 트리거 토픽 (RViz와 함께 쓰는 헤드리스 모드) ───
+        # ── 등록/리셋/대기/복귀 트리거 토픽 (RViz와 함께 쓰는 헤드리스 모드) ───
         self._reg_request = False
         self.create_subscription(Empty, "/robocart/register", self._on_register_cmd, 1)
         self.create_subscription(Empty, "/robocart/reset",    self._on_reset_cmd,    1)
         self.create_subscription(Empty, "/robocart/wait",     self._on_wait_cmd,     1)
         self.create_subscription(Empty, "/robocart/resume",   self._on_resume_cmd,   1)
-        print("  [OK] 등록/리셋/대기 명령 토픽 구독")
+        self.create_subscription(Empty, "/robocart/return",   self._on_return_cmd,   1)
+        print("  [OK] 등록/리셋/대기/복귀 명령 토픽 구독")
         print("       등록: ros2 topic pub /robocart/register std_msgs/Empty {} --once")
         print("       리셋: ros2 topic pub /robocart/reset    std_msgs/Empty {} --once")
         print("       대기: ros2 topic pub /robocart/wait     std_msgs/Empty {} --once")
         print("       재개: ros2 topic pub /robocart/resume   std_msgs/Empty {} --once")
+        print("       복귀: ros2 topic pub /robocart/return   std_msgs/Empty {} --once")
         print("       시각화: rviz2  →  Image(/robocart/image_overlay/compressed)")
 
         print("[inference_node] 준비 완료 (Ctrl+C 종료)")
@@ -258,8 +260,8 @@ class InferenceNode(Node):
 
         h, w = frame.shape[:2]
 
-        # ── 대기 모드 ─────────────────────────────────
-        if self.mode == "wait":
+        # ── 대기 / 복귀 모드 ─────────────────────────────
+        if self.mode in ("wait", "return"):
             self._draw_wait_overlay(frame, boxes)
             self._publish_overlay(frame)
             return
@@ -444,6 +446,19 @@ class InferenceNode(Node):
             return
         print("[inference_node] 재개 명령 수신 → 추종 재개")
         self.mode = "track"
+
+    def _on_return_cmd(self, _msg) -> None:
+        """복귀 명령 → 추종 정지 + Nav2가 바퀴 제어 인수.
+        Nav2 도착 시 mode_controller가 /robocart/reset 발행 → 다음 손님 등록 모드 복귀.
+        """
+        print("[inference_node] 복귀 명령 수신 → 추종 정지, Nav2 인수")
+        self.mode = "return"
+        self.locked = False
+        self.prev_cx = None
+        self.lost_since = None
+        self._send({"type": "center"})
+        if self.drive_enable:
+            self._send({"type": "stop"})
 
     def _do_reset(self, reason: str) -> None:
         """등록 정보 삭제 + register mode 복귀 + 자동 등록 타이머 재시작."""
