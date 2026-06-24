@@ -58,16 +58,25 @@ KCF_MAX_AGE     = 40     # KCF 단독 보간 허용 최대 (초과 시 강제 �
 # MJPEG 웹 출력 (:8080)
 # ══════════════════════════════════════════════════════════════════════════════
 
-_web_lock = threading.Lock()
+_web_cond = threading.Condition()
 _web_jpeg: bytes | None = None
+_web_seq: int = 0
+_web_last_t: float = 0.0
 
 
 def web_push(frame: np.ndarray) -> None:
-    global _web_jpeg
-    ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    global _web_jpeg, _web_seq, _web_last_t
+    now = time.time()
+    if now - _web_last_t < 1.0 / 15:   # 인코딩을 15fps로 제한(메인 루프 CPU 절약)
+        return
+    _web_last_t = now
+    small = cv2.resize(frame, (320, 240))     # 640×480→320×240: JPEG 크기 1/4로 절감
+    ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 65])
     if ok:
-        with _web_lock:
+        with _web_cond:
             _web_jpeg = jpeg.tobytes()
+            _web_seq += 1
+            _web_cond.notify_all()
 
 
 def start_web_server(port: int = 8080, host: str = "0.0.0.0"):
@@ -94,18 +103,27 @@ img{max-width:97vw;border:1px solid #444;margin-top:10px}</style></head>
                                  "multipart/x-mixed-replace; boundary=frame")
                 self.end_headers()
                 try:
+                    last_seq = -1
+                    last_send_t = 0.0
                     while True:
-                        with _web_lock:
+                        with _web_cond:
+                            _web_cond.wait_for(
+                                lambda: _web_seq != last_seq, timeout=1.0)
                             jpeg = _web_jpeg
-                        if jpeg is None:
-                            time.sleep(0.05)
+                            cur_seq = _web_seq
+                        if jpeg is None or cur_seq == last_seq:
                             continue
+                        last_seq = cur_seq          # seq 항상 소비 → 이전 프레임 재전송 없음
+                        now = time.time()
+                        if now - last_send_t < 1.0 / 15:
+                            continue               # 15fps 초과 시 전송 생략(최신 프레임 유지)
+                        last_send_t = now
                         self.wfile.write(b"--frame\r\n")
                         self.wfile.write(b"Content-Type: image/jpeg\r\n")
                         self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
                         self.wfile.write(jpeg)
                         self.wfile.write(b"\r\n")
-                        time.sleep(1 / 20)
+                        self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 return
@@ -242,29 +260,52 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 15.0):
                 cv2.putText(frame, f"start in {sec}", (20, 95),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 0), 3)
                 web_push(frame)
-        # ~2.5초 동안 샘플 수집
-        embs, cols, n = [], [], 0
-        t_end = time.time() + 2.5
+        # ~4초 동안 샘플 수집. YOLO(880ms)를 백그라운드 스레드에서 돌려 메인은
+        # 카메라 속도로 영상만 갱신 → 캡처 중에도 화면이 멈추지 않는다.
+        embs, cols = [], []
+        shared = {"bbox": None, "n": 0}
+        stop_flag = {"v": False}
+        lock = threading.Lock()
+
+        def _capture_worker():
+            while not stop_flag["v"]:
+                f = cam.read()
+                if f is None:
+                    time.sleep(0.01); continue
+                bb = largest_bbox(yolo.detect(f))
+                if bb is None:
+                    with lock:
+                        shared["bbox"] = None
+                    continue
+                x1, y1, x2, y2 = bb
+                crop = f[max(0, y1):y2, max(0, x1):x2]
+                if crop.size > 0:
+                    feat = extract_features(crop, reid)
+                    if feat["reid_emb"]:
+                        with lock:
+                            embs.append(feat["reid_emb"]); cols.append(feat["color"])
+                            shared["bbox"] = bb; shared["n"] = len(embs)
+
+        th = threading.Thread(target=_capture_worker, daemon=True)
+        th.start()
+        t_end = time.time() + 4.0
         while time.time() < t_end:
             frame = cam.read()
             if frame is None:
                 time.sleep(0.02); continue
-            bboxes = yolo.detect(frame)
-            bb = largest_bbox(bboxes)
+            with lock:
+                bb, n = shared["bbox"], shared["n"]
             if bb is not None:
-                x1, y1, x2, y2 = bb
-                crop = frame[y1:y2, x1:x2]
-                if crop.size > 0:
-                    feat = extract_features(crop, reid)
-                    if feat["reid_emb"]:
-                        embs.append(feat["reid_emb"]); cols.append(feat["color"]); n += 1
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(frame, (bb[0], bb[1]), (bb[2], bb[3]), (0, 255, 0), 2)
             cv2.putText(frame, f"{pname} capturing... {n}", (20, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
             web_push(frame)
+            time.sleep(0.01)
+        stop_flag["v"] = True
+        th.join(timeout=1.5)
         profile["phases"][pname] = {"reid_emb": _avg_embed(embs),
                                     "color": _avg_color(cols)}
-        print(f"[register] {pname}: {n} 샘플 수집")
+        print(f"[register] {pname}: {len(embs)} 샘플 수집")
 
     save_profile(profile)
     return profile
@@ -365,6 +406,7 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
     kcf_age = 0
     frame_count = 0
     t0 = time.time()
+    fps_t, fps_n, fps_val = t0, 0, 0.0   # 최근 구간 FPS(누적 평균이 아니라 실시간 체감값)
 
     avg = {"det": 0.0, "reid": 0.0}
     last_seq = 0
@@ -414,6 +456,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
             else:
                 tracker.update(False)
                 kcf.deinit(); reg_det_bbox = None
+            # ── 보정용 진단 로그: 최고 후보의 reid/color/total 실측 (임계값 튜닝 근거) ──
+            if detail is not None:
+                print(f"[score] reid={detail['reid']:.2f} color={detail['color']:.2f} "
+                      f"pos={detail['position']:.2f} total={total:.2f} "
+                      f"thr={thr:.2f} reidF={LF.REID_FLOOR:.2f} "
+                      f"=> {'MATCH' if matched else 'reject'} (cand={len(last_bboxes)})")
         elif interp_alive:
             # ── 검출 사이 프레임 → KCF 보간 (수 ms) ──
             kb = kcf.update(frame); kcf_age += 1
@@ -443,9 +491,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
             cv2.putText(frame, tracker.status, (x1, max(18, y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 140, 255), 2)
 
-        fps = frame_count / max(time.time() - t0, 1e-6)
+        fps_n += 1
+        _now = time.time()
+        if _now - fps_t >= 0.5:          # 0.5초 구간마다 실시간 FPS 갱신
+            fps_val = fps_n / (_now - fps_t)
+            fps_t, fps_n = _now, 0
         mode = "DET" if fresh else ("KCF" if interp else "-")
-        hud = (f"FPS:{fps:.1f} {mode} det:{avg['det']:.0f} reid:{avg['reid']:.0f}ms "
+        hud = (f"FPS:{fps_val:.1f} {mode} det:{avg['det']:.0f} reid:{avg['reid']:.0f}ms "
                f"Cand:{len(last_bboxes)} {tracker.status.upper()}")
         cv2.rectangle(frame, (0, 0), (w_f, 22), (0, 0, 0), -1)
         cv2.putText(frame, hud, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
@@ -455,8 +507,10 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
         # 추종 중이면 현재 박스로 속도 계산, 아니면 정지(안전). KCF 보간 프레임도 draw_bbox
         # 가 있으면 그 위치로 계속 추종(끊김 없는 제어).
         if follower is not None:
-            v, w = follower.update(draw_bbox, w_f, h_f, tracker.is_tracking)
-            cv2.putText(frame, f"WHEEL v={v:+.2f} w={w:+.2f}",
+            v, w = follower.compute(draw_bbox, w_f, h_f, tracker.is_tracking)
+            if frame_count % 3 == 0:   # ≈10Hz — 매 프레임 rclpy publish 호출 시 오버헤드로 FPS 저하 방지
+                follower.publish(v, w)
+            cv2.putText(frame, f"WHEEL v={v:+.2f} w={w:+.2f} dist={follower.last_dist_cm:.0f}cm",
                         (6, h_f - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         web_push(frame)
@@ -473,7 +527,9 @@ def parse_args():
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
-    p.add_argument("--imgsz", type=int, default=256)
+    p.add_argument("--imgsz", type=int, default=192,
+                   help="YOLO 입력 크기. 192=빠름(스로틀 환경 권장), 256=정확. "
+                        "models_light/yolov8n_<크기>.onnx 필요")
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--register", action="store_true", help="등록 후 추종")
     p.add_argument("--reset", action="store_true", help="기존 프로필 삭제 후 등록")

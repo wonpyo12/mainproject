@@ -44,18 +44,28 @@ except ImportError:
 BURGER_MAX_LIN = 0.22   # m/s
 BURGER_MAX_ANG = 2.84   # rad/s
 
-# ── 추종 파라미터 (1차 안 — 실차에서 튜닝) ────────────────────────────────────
-TARGET_HEIGHT_RATIO = 0.55   # 사용자 bbox 높이가 화면 높이의 이 비율이면 '적정 거리'
-HEIGHT_DEADBAND     = 0.07   # 거리 오차가 이 이내면 전후진 정지(불필요한 떨림 방지)
-CENTER_DEADBAND     = 0.08   # 중심 편차(정규화)가 이 이내면 회전 정지
+# ── 거리 추정 (bbox 폭 기반, 핀홀 모델) ───────────────────────────────────────
+# 근거리(60~80cm)에선 서 있는 사람이 세로로 화면 밖으로 잘려 bbox 높이가 부정확.
+# 폭은 잘리지 않으므로 폭을 쓴다. 같은 사람: 거리 × 폭(px) = 상수(CALIB_K).
+#   거리[cm] = CALIB_K / bbox_width[px]
+# CALIB_K 는 알려진 거리에서 1회 보정해 확정한다(아래 기본값은 C920 기하 추정치).
+#   보정법: 70cm 에 서서 HUD 의 dist 표시값을 보고, CALIB_K *= (실제70 / 표시값)
+CALIB_K       = 22000.0   # ≈ 70cm × 약 314px (실차 보정 필요)
+TARGET_DIST_CM = 70.0     # 목표 추종 거리 (60~80 가운데)
+DIST_NEAR_CM   = 60.0     # 이보다 가까우면 정지(후진 비허용 시)
+DIST_FAR_CM    = 80.0     # 이보다 멀면 전진
+                          # → 60~80 구간 안이면 정지 = 사용자 정지 시 로봇 정지
 
-KP_LIN = 0.5    # 거리 오차 → 선속도 게인
-KP_ANG = 1.0    # 좌우 편차 → 각속도 게인
+CENTER_DEADBAND = 0.12    # 중심 편차(정규화)가 이 이내면 회전 정지(전진 유지)
+
+KP_LIN_DIST = 0.004  # 거리 오차[cm] → 선속도 게인 (err 30cm 에서 약 MAX_LIN)
+KP_ANG      = 0.5    # 좌우 편차 → 각속도 게인 (제자리 회전 방지 위해 낮춤)
 
 # 운용 상한 (Burger 하드 한계보다 보수적으로 — 첫 확인 단계는 천천히)
-MAX_LIN = 0.12   # m/s
-MAX_ANG = 1.0    # rad/s
-ALLOW_REVERSE = False   # 너무 가까울 때 후진 허용 여부 (1차엔 정지만)
+MAX_LIN = 0.12       # m/s (전진 상한)
+MAX_LIN_REV = 0.08   # m/s (후진 상한 — 후방 센서 없어 블라인드라 더 보수적으로)
+MAX_ANG = 0.5        # rad/s (전진을 덮어쓰는 강한 회전 금지 → 제자리 스핀 방지)
+ALLOW_REVERSE = True # 60cm 보다 가까우면 뒤로 물러나 거리 유지
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -81,25 +91,31 @@ class WheelFollower:
         self._node.get_logger().info(f"바퀴 추종 시작 → {topic} (Twist) 발행")
         self.last_v = 0.0
         self.last_w = 0.0
+        self.last_dist_cm = 0.0   # HUD 표시·보정용 추정 거리
 
     def compute(self, bbox, frame_w: int, frame_h: int, is_tracking: bool):
         """bbox·추적상태 → (선속도 v[m/s], 각속도 w[rad/s]). 발행은 하지 않음."""
         if not is_tracking or bbox is None or frame_w <= 0 or frame_h <= 0:
+            self.last_dist_cm = 0.0
             return 0.0, 0.0
 
         x1, y1, x2, y2 = bbox
-        bbox_h = max(1, y2 - y1)
+        bbox_w = max(1, x2 - x1)
         cx = (x1 + x2) / 2.0
 
-        # ── 거리 제어: bbox 높이 비율로 거리 추정 ──
-        height_ratio = bbox_h / frame_h
-        err_dist = TARGET_HEIGHT_RATIO - height_ratio   # +면 멀다(작게 보임)→전진
-        if abs(err_dist) < HEIGHT_DEADBAND:
-            v = 0.0
+        # ── 거리 제어: bbox 폭으로 거리 추정(핀홀), 60~80cm 유지 ──
+        dist_cm = CALIB_K / bbox_w
+        self.last_dist_cm = dist_cm
+        if DIST_NEAR_CM <= dist_cm <= DIST_FAR_CM:
+            v = 0.0                                   # 유지 구간 → 정지(사용자 정지 시 정지)
         else:
-            v = _clamp(KP_LIN * err_dist, -MAX_LIN, MAX_LIN)
-            if v < 0 and not ALLOW_REVERSE:
-                v = 0.0   # 너무 가까우면 후진 대신 정지(1차 안전)
+            err_dist = dist_cm - TARGET_DIST_CM       # +면 멀다 → 전진, -면 가까움 → 후진
+            v = _clamp(KP_LIN_DIST * err_dist, -MAX_LIN, MAX_LIN)
+            if v < 0:
+                if not ALLOW_REVERSE:
+                    v = 0.0
+                else:
+                    v = max(v, -MAX_LIN_REV)          # 후진은 더 보수적으로 제한
 
         # ── 방향 제어: bbox 중심의 좌우 편차 ──
         err_center = (cx - frame_w / 2.0) / (frame_w / 2.0)   # [-1,1], +면 우측
@@ -121,9 +137,6 @@ class WheelFollower:
         # 하드 한계 재클램프 (어떤 경로로 들어와도 Burger 한계 초과 금지)
         v = _clamp(v, -BURGER_MAX_LIN, BURGER_MAX_LIN)
         w = _clamp(w, -BURGER_MAX_ANG, BURGER_MAX_ANG)
-        # 실차 확인 결과 좌우 회전이 REP103 기준과 반대로 동작(하드웨어/펌웨어 쪽 부호
-        # 관례 차이) → 발행 직전 단 한 곳에서 반전. compute()/--test 어느 경로든 동일하게 적용됨.
-        w = -w
         msg = Twist()
         msg.linear.x = float(v)
         msg.angular.z = float(w)
