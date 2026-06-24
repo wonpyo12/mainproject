@@ -34,6 +34,7 @@ setup(
         'console_scripts': [
             'mode_controller        = robocart_navigation.mode_controller:main',
             'return_trigger_bridge  = robocart_navigation.return_trigger_bridge:main',
+            'dock_pose_recorder     = robocart_navigation.dock_pose_recorder:main',
         ],
     },
 )

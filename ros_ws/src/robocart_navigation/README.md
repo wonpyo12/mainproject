@@ -94,7 +94,19 @@ ros2 topic pub /robocart/wait std_msgs/Empty {} --once
 ros2 topic pub /robocart/resume std_msgs/Empty {} --once
 ```
 
-### 도킹 좌표 변경
+### 도킹 좌표 변경 (3가지 방법)
+
+**1) 자동 — `dock_pose_recorder` 서비스 사용 (실전 권장)**
+
+🖥️ VM
+```bash
+# wait_return.launch.py 실행 중이면 dock_pose_recorder도 같이 떠 있음
+# 로봇을 도킹 위치에 두고:
+ros2 service call /set_dock_pose std_srvs/srv/Trigger
+```
+→ 현재 TF(map→base_footprint) 읽어서 `return_params.yaml` 자동 갱신
+
+**2) 수동 — yaml 직접 편집**
 
 `config/return_params.yaml`:
 ```yaml
@@ -104,6 +116,13 @@ mode_controller:
       x: 1.2
       y: -0.5
       yaw: 1.57
+```
+
+**3) 단독 노드 — Nav2 없이 좌표만 기록**
+```bash
+ros2 run robocart_navigation dock_pose_recorder
+# 다른 터미널에서
+ros2 service call /set_dock_pose std_srvs/srv/Trigger
 ```
 
 ---
@@ -124,15 +143,19 @@ scripts/
 maps/                              ─ 저장 지도 (`store_v1/map.pgm` 등)
 ```
 
-## 토픽 정리
+## 토픽 / 서비스 / HTTP 정리
 
-| 토픽 | 방향 | 메시지 | 의미 |
-|------|------|--------|------|
-| `/robocart/return` | sub | `std_msgs/Empty` | return 모드 진입 |
-| `/robocart/wait`   | sub | `std_msgs/Empty` | 진행 중 복귀 취소 (정지) |
-| `/robocart/resume` | sub | `std_msgs/Empty` | 진행 중 복귀 취소 (추종 재개) |
-| `/cmd_vel` | pub (Nav2 경유) | `geometry_msgs/Twist` | 바퀴 명령 |
-| `/scan`, `/odom`, `/tf` | sub | — | TB3 bringup이 발행 |
+| 인터페이스 | 종류 | 타입 | 의미 |
+|----------|------|------|------|
+| `/robocart/return` | Topic | `std_msgs/Empty` | return 모드 진입 |
+| `/robocart/wait`   | Topic | `std_msgs/Empty` | 진행 중 복귀 취소 (정지) |
+| `/robocart/resume` | Topic | `std_msgs/Empty` | 진행 중 복귀 취소 (추종 재개) |
+| `/robocart/reset`  | Topic | `std_msgs/Empty` | Nav2 도착 시 자동 발행 |
+| `/set_dock_pose`   | Service | `std_srvs/Trigger` | 현재 위치를 home_pose로 저장 |
+| `POST /return`     | HTTP   | JSON `{robot_serial}` | 백엔드 → ROS 결제 후 복귀 트리거 |
+| `GET /health`      | HTTP   | — | 브릿지 헬스체크 |
+| `/cmd_vel` | Topic (Nav2 경유) | `geometry_msgs/Twist` | 바퀴 명령 |
+| `/scan`, `/odom`, `/tf` | Topic (구독) | — | TB3 bringup이 발행 |
 
 ---
 

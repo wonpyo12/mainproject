@@ -68,6 +68,14 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
+    dock_recorder = Node(
+        package="robocart_navigation",
+        executable="dock_pose_recorder",
+        name="dock_pose_recorder",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             "use_sim_time", default_value="false",
@@ -87,4 +95,5 @@ def generate_launch_description() -> LaunchDescription:
         nav2_bringup,
         mode_controller,
         return_bridge,
+        dock_recorder,
     ])
