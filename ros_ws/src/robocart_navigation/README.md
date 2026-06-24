@@ -2,26 +2,42 @@
 
 자율 매핑 / 자율 주행 패키지. RoboCart 시나리오의 자율매핑(지도 생성)과 wait/return 모드(저장 지도 기반 도킹 복귀)를 담당.
 
-## 두 가지 모드
+## 세 가지 launch
 
-| 모드 | launch | 동작 |
-|------|--------|------|
-| 자율매핑 | `autonomous_mapping.launch.py` | 사람 조작 없이 SLAM으로 지도 생성 |
-| 자율주행 (wait/return) | `wait_return.launch.py` | 저장 지도 기반 도킹 위치로 복귀 |
+| launch | 동작 | 환경 |
+|--------|------|------|
+| `simulation.launch.py` | Gazebo Sim + TB4 시뮬 환경 띄움 | 시뮬 전용 |
+| `autonomous_mapping.launch.py` | SLAM + 탐색 (자율매핑) | 시뮬 / 실물 공용 |
+| `wait_return.launch.py` | 저장 지도 + Nav2 (도킹 복귀) | 시뮬 / 실물 공용 |
 
 ---
 
 ## A. 자율매핑
 
-### 1) 로봇 bringup
+### A-1) 시뮬레이션 환경 (로봇 없이 검증)
+
+🖥️ VM 터미널 ①
+```bash
+ros2 launch robocart_navigation simulation.launch.py
+# 다른 월드: world:=depot 또는 world:=maze
+```
+Gazebo Sim (Ignition Fortress) + TurtleBot4 warehouse 월드 기동.
+
+🖥️ VM 터미널 ②
+```bash
+ros2 launch robocart_navigation autonomous_mapping.launch.py use_sim_time:=true
+```
+
+> ARM64 Mac VM에서는 Gazebo Classic 부재로 **TurtleBot4 + 새 Gazebo Sim** 사용.
+> SLAM 알고리즘 동일, 토픽 인터페이스(`/scan`, `/odom`, `/cmd_vel`) 동일.
+
+### A-2) 실물 환경
 
 🤖 RPi (VM에서 ssh로 접속)
 ```bash
 ssh ubuntu@192.168.0.67
 ros2 launch turtlebot3_bringup robot.launch.py
 ```
-
-### 2) 자율 매핑
 
 🖥️ VM 터미널 ②
 ```bash

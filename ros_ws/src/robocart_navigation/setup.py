@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name + '/launch', [
             'launch/autonomous_mapping.launch.py',
             'launch/wait_return.launch.py',
+            'launch/simulation.launch.py',
         ]),
         ('share/' + package_name + '/config', [
             'config/explore_params.yaml',
@@ -31,7 +32,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'mode_controller = robocart_navigation.mode_controller:main',
+            'mode_controller        = robocart_navigation.mode_controller:main',
+            'return_trigger_bridge  = robocart_navigation.return_trigger_bridge:main',
         ],
     },
 )

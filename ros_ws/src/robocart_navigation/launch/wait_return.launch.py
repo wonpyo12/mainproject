@@ -57,6 +57,17 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[return_params, {"use_sim_time": use_sim_time}],
     )
 
+    return_bridge = Node(
+        package="robocart_navigation",
+        executable="return_trigger_bridge",
+        name="return_trigger_bridge",
+        output="screen",
+        parameters=[{
+            "port": LaunchConfiguration("bridge_port"),
+            "bind_host": LaunchConfiguration("bridge_host"),
+        }],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             "use_sim_time", default_value="false",
@@ -65,6 +76,15 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "map", description="저장된 지도 yaml 경로 (필수)"
         ),
+        DeclareLaunchArgument(
+            "bridge_port", default_value="5555",
+            description="백엔드 → ROS HTTP 브릿지 포트"
+        ),
+        DeclareLaunchArgument(
+            "bridge_host", default_value="0.0.0.0",
+            description="브릿지 바인드 호스트"
+        ),
         nav2_bringup,
         mode_controller,
+        return_bridge,
     ])
