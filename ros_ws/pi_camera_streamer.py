@@ -30,8 +30,8 @@ class CamHandler(BaseHTTPRequestHandler):
                     time.sleep(0.03)
                     continue
                 try:
-                    # JPEG 포맷으로 프레임 압축 (대역폭 감소 핵심, 퀄리티 60으로 낮춰 전송 속도 향상)
-                    ret, jpeg = cv2.imencode('.jpg', img_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                    # JPEG 포맷으로 프레임 압축 (퀄리티를 50으로 낮춰 네트워크 전송 속도 극대화)
+                    ret, jpeg = cv2.imencode('.jpg', img_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
                     if not ret:
                         time.sleep(0.01)
                         continue
@@ -43,7 +43,7 @@ class CamHandler(BaseHTTPRequestHandler):
                     self.wfile.write(jpeg.tobytes())
                     self.wfile.write(b'\r\n')
                     self.wfile.flush()
-                    time.sleep(0.02)  # 약 50fps 대역폭 제한 (딜레이 최소화)
+                    time.sleep(0.07)  # 약 15fps로 대역폭 제한 (무선 네트워크 대역폭 부족에 의한 순간적인 렉 방지)
                 except (ConnectionResetError, BrokenPipeError):
                     break
                 except Exception as e:
@@ -74,9 +74,9 @@ def main():
     # 카메라 초기화 (0번 기본 카메라 연결)
     cap = cv2.VideoCapture(0)
     
-    # 해상도 설정 (네트워크 전송 지연 극대화를 줄이기 위해 400x300으로 압축)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 400)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 300)
+    # 해상도 설정 (모든 카메라가 지원하는 표준 640x480 해상도로 설정)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     if not cap.isOpened():
         print("[Error] 카메라를 열 수 없습니다. 카메라 연결 상태를 확인해 주세요.")

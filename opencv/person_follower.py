@@ -8,6 +8,41 @@ import time
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 
+class VideoCaptureThreaded:
+    """
+    OpenCV의 네트워크 스트림 버퍼 지연(Buffer Lag)을 없애기 위해
+    백그라운드 스레드에서 상시 최신 프레임만 읽어오는 클래스
+    """
+    def __init__(self, src):
+        self.cap = cv2.VideoCapture(src)
+        self.ret, self.frame = self.cap.read()
+        self.running = True
+        self.thread = threading.Thread(target=self.update, args=())
+        self.thread.daemon = True
+        self.thread.start()
+
+    def update(self):
+        while self.running:
+            if self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if ret:
+                    self.ret = ret
+                    self.frame = frame
+                else:
+                    time.sleep(0.01)
+
+    def read(self):
+        return self.ret, self.frame
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def release(self):
+        self.running = False
+        self.cap.release()
+
+import threading
+
 def main():
     # ── 카메라 소스 설정 ──
     # 라즈베리파이 4 IP 주소 (192.168.0.67)
@@ -16,16 +51,20 @@ def main():
     stream_url = f"http://{PI_IP}:5000/video_feed"
     
     print(f"[연동] 카메라 스트림 연결 중: {stream_url}")
-    cap = cv2.VideoCapture(stream_url)
-    if not cap.isOpened():
+    # 버퍼 지연 방지를 위해 쓰레드 기반 비디오 캡처 사용
+    cap = VideoCaptureThreaded(stream_url)
+    time.sleep(0.5)
+    ret, frame = cap.read()
+    if not ret:
         print(f"[Error] 비디오 피드({stream_url})에 연결할 수 없습니다.")
         print("라즈베리파이의 'pi_camera_streamer.py'가 실행 중인지, IP 주소가 맞는지 확인하세요.")
+        cap.release()
         return
 
     print("==================================================")
     print("  [사람 인식 및 가상 제어 테스트 모드 - 뒷모습 인식 강화형]")
     print("  - 코(Nose)를 배제하고 어깨~골반 거리로 인식하여 뒤돌아도 상시 트래킹 유지")
-    print("  - MediaPipe model_complexity=2 (정밀형 모델) 탑재")
+    print("  - MediaPipe model_complexity=0 (초고속 모델) 탑재")
     print("  - 종료하려면 카메라 창에서 'q' 키를 누르세요.")
     print("==================================================")
 
