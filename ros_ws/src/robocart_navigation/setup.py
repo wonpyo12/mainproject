@@ -1,4 +1,5 @@
 from setuptools import find_packages, setup
+from glob import glob
 
 package_name = 'robocart_navigation'
 
@@ -22,6 +23,7 @@ setup(
         ('share/' + package_name + '/scripts', [
             'scripts/save_map.sh',
         ]),
+        ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

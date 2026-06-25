@@ -1,0 +1,154 @@
+<?xml version='1.0' encoding='ASCII'?>
+<!--
+  robocart_classroom.sdf — 연희직업전문학원 시연 공간 시뮬 모델 (Gazebo Sim / Ignition Fortress)
+
+  구조: TB4 warehouse.sdf와 동일하게 맞춤 (plugins/physics).
+  Sensors/IMU 플러그인은 TB4 로봇 모델이 자체 로드하므로 월드에서 제거 (충돌 방지).
+
+  좌표계: 방 중앙이 원점(0,0). +x 동쪽(문 방향), +y 북쪽(사물함 방향).
+  치수 (사진 추정):
+    방 6m × 5m × 2m
+    사물함: 북벽 안쪽 0.4m 두께 좌/우 묶음
+    기둥: 사물함 사이 중앙
+    문: 동벽 남쪽 절반 1m 개구부
+  스폰 권장: x=0, y=-1.5, yaw=1.5708 (문 반대편, 사물함 바라봄)
+-->
+<sdf version='1.7'>
+  <world name='robocart_classroom'>
+    <physics type="ode">
+      <max_step_size>0.003</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin name='ignition::gazebo::systems::Physics' filename='libignition-gazebo-physics-system.so'/>
+    <plugin name='ignition::gazebo::systems::UserCommands' filename='libignition-gazebo-user-commands-system.so'/>
+    <plugin name='ignition::gazebo::systems::SceneBroadcaster' filename='libignition-gazebo-scene-broadcaster-system.so'/>
+
+    <scene>
+      <ambient>1 1 1 1</ambient>
+      <background>0.3 0.7 0.9 1</background>
+      <shadows>0</shadows>
+      <grid>false</grid>
+    </scene>
+
+    <!-- 바닥 (collision-only, warehouse 패턴) -->
+    <model name='ground_plane'>
+      <static>true</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0.0 0.0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+        </collision>
+      </link>
+      <pose>0 0 0 0 0 0</pose>
+    </model>
+
+    <!-- 북쪽 벽 (사물함 뒤) -->
+    <model name='wall_north'>
+      <static>true</static>
+      <pose>0 2.5 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>6 0.1 2</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>6 0.1 2</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 남쪽 벽 -->
+    <model name='wall_south'>
+      <static>true</static>
+      <pose>0 -2.5 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>6 0.1 2</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>6 0.1 2</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 서쪽 벽 -->
+    <model name='wall_west'>
+      <static>true</static>
+      <pose>-3 0 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.1 5 2</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>0.1 5 2</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 동쪽 벽 위 절반 -->
+    <model name='wall_east_top'>
+      <static>true</static>
+      <pose>3 1.5 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.1 2 2</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>0.1 2 2</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 동쪽 벽 아래 절반 (문 개구부 y ∈ [-0.5, 0.5]) -->
+    <model name='wall_east_bottom'>
+      <static>true</static>
+      <pose>3 -1.5 1 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.1 2 2</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>0.1 2 2</size></box></geometry>
+          <material><ambient>0.7 0.7 0.65 1</ambient><diffuse>0.7 0.7 0.65 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 사물함 왼쪽 -->
+    <model name='lockers_left'>
+      <static>true</static>
+      <pose>-1.5 2.1 0.75 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>1.5 0.4 1.5</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>1.5 0.4 1.5</size></box></geometry>
+          <material><ambient>0.92 0.88 0.78 1</ambient><diffuse>0.92 0.88 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 사물함 오른쪽 -->
+    <model name='lockers_right'>
+      <static>true</static>
+      <pose>1.5 2.1 0.75 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>2 0.4 1.5</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>2 0.4 1.5</size></box></geometry>
+          <material><ambient>0.92 0.88 0.78 1</ambient><diffuse>0.92 0.88 0.78 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 중앙 기둥 -->
+    <model name='pillar'>
+      <static>true</static>
+      <pose>0 2.05 1.25 0 0 0</pose>
+      <link name='link'>
+        <collision name='c'><geometry><box><size>0.4 0.4 2.5</size></box></geometry></collision>
+        <visual name='v'>
+          <geometry><box><size>0.4 0.4 2.5</size></box></geometry>
+          <material><ambient>0.55 0.45 0.35 1</ambient><diffuse>0.55 0.45 0.35 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
