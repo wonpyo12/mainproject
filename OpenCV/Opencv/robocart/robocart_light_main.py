@@ -58,25 +58,23 @@ KCF_MAX_AGE     = 40     # KCF 단독 보간 허용 최대 (초과 시 강제 �
 # MJPEG 웹 출력 (:8080)
 # ══════════════════════════════════════════════════════════════════════════════
 
-_web_cond = threading.Condition()
-_web_jpeg: bytes | None = None
-_web_seq: int = 0
-_web_last_t: float = 0.0
+# 팀원 pi_camera_streamer.py 와 동일한 "일정 박자 + 최신 프레임" 전략:
+#   - 메인 루프는 최신(주석 포함) 프레임을 '참조만' 교체 → 인코딩/리사이즈를 안 해 비용 ≈0,
+#     무거운 인식(GIL 점유)과 전송이 분리됨.
+#   - 전송 스레드가 sleep 으로 일정 간격(≈15fps) 송출. 생산이 잠깐 멈춰도 같은 프레임을
+#     다시 보내므로 화면이 '정지'가 아닌 '약간 느림'으로 보임 = 체감 부드러움.
+# (이전: Condition+seq 방식은 전송이 생산에 묶여, 인식으로 생산이 멈추면 화면도 같이 멈췄음)
+# ※ 인식/추적/바퀴제어와는 무관 — 이 경로는 화면 표시 전용.
+_web_frame: np.ndarray | None = None
+
+# 브라우저가 /stream 을 한 번이라도 열면 set 됨. 등록 촬영을 "뷰어 접속 후"에
+# 시작하기 위한 신호(타이밍 문제 해결: 접속 전엔 안내 화면에서 무한 대기).
+_viewer_event = threading.Event()
 
 
 def web_push(frame: np.ndarray) -> None:
-    global _web_jpeg, _web_seq, _web_last_t
-    now = time.time()
-    if now - _web_last_t < 1.0 / 15:   # 인코딩을 15fps로 제한(메인 루프 CPU 절약)
-        return
-    _web_last_t = now
-    small = cv2.resize(frame, (320, 240))     # 640×480→320×240: JPEG 크기 1/4로 절감
-    ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 65])
-    if ok:
-        with _web_cond:
-            _web_jpeg = jpeg.tobytes()
-            _web_seq += 1
-            _web_cond.notify_all()
+    global _web_frame
+    _web_frame = frame   # 할당은 원자적 → 락 불필요(팀원 코드와 동일). 인코딩은 전송 스레드가 담당.
 
 
 def start_web_server(port: int = 8080, host: str = "0.0.0.0"):
@@ -98,32 +96,30 @@ img{max-width:97vw;border:1px solid #444;margin-top:10px}</style></head>
                 self.wfile.write(page)
                 return
             if self.path == "/stream":
+                _viewer_event.set()      # 뷰어 접속됨 → 등록 촬영 시작 신호
                 self.send_response(200)
                 self.send_header("Content-Type",
                                  "multipart/x-mixed-replace; boundary=frame")
                 self.end_headers()
                 try:
-                    last_seq = -1
-                    last_send_t = 0.0
+                    # 일정 박자로 '최신 프레임'을 인코딩·전송 (인코딩이 여기서=메인 루프 밖).
                     while True:
-                        with _web_cond:
-                            _web_cond.wait_for(
-                                lambda: _web_seq != last_seq, timeout=1.0)
-                            jpeg = _web_jpeg
-                            cur_seq = _web_seq
-                        if jpeg is None or cur_seq == last_seq:
-                            continue
-                        last_seq = cur_seq          # seq 항상 소비 → 이전 프레임 재전송 없음
-                        now = time.time()
-                        if now - last_send_t < 1.0 / 15:
-                            continue               # 15fps 초과 시 전송 생략(최신 프레임 유지)
-                        last_send_t = now
+                        frame = _web_frame          # 최신 참조만 읽음(원자적)
+                        if frame is None:
+                            time.sleep(0.03); continue
+                        small = cv2.resize(frame, (480, 360))   # 대역폭 절감(HUD 가독 유지)
+                        ok, jpeg = cv2.imencode(
+                            ".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 55])
+                        if not ok:
+                            time.sleep(0.01); continue
+                        data = jpeg.tobytes()
                         self.wfile.write(b"--frame\r\n")
                         self.wfile.write(b"Content-Type: image/jpeg\r\n")
-                        self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
-                        self.wfile.write(jpeg)
+                        self.wfile.write(f"Content-Length: {len(data)}\r\n\r\n".encode())
+                        self.wfile.write(data)
                         self.wfile.write(b"\r\n")
                         self.wfile.flush()
+                        time.sleep(0.066)           # ≈15fps 고정 페이싱(무선 렉 방지, 팀원과 동일)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 return
@@ -233,19 +229,34 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 15.0):
                "registered_at": datetime.now().isoformat(timespec="seconds"),
                "phases": {}}
 
-    # ── 준비 대기: 브라우저(:8080) 접속 + 위치 잡을 시간 ──
+    # ── 준비 대기 1: 브라우저(:8080)가 접속할 때까지 무한 대기 ──
+    # (고정 타이머가 아니라 '접속 신호'로 시작 → 8080 접속 타이밍을 놓칠 일이 없음)
+    print("[register] 브라우저(:8080) 접속 대기 중...")
+    while not _viewer_event.is_set():
+        frame = cam.read()
+        if frame is None:
+            time.sleep(0.02); continue
+        cv2.putText(frame, "OPEN http://<pi-ip>:8080", (20, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.putText(frame, "(waiting for browser to connect...)", (20, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2)
+        web_push(frame)
+        time.sleep(0.03)
+    print("[register] 뷰어 접속 확인 → 위치 잡을 시간 제공")
+
+    # ── 준비 대기 2: 접속 후 위치 잡을 시간(grace_sec 카운트다운) ──
     t_end = time.time() + grace_sec
     while time.time() < t_end:
         frame = cam.read()
         if frame is None:
             time.sleep(0.02); continue
         left = int(t_end - time.time()) + 1
-        cv2.putText(frame, "OPEN :8080 and STAND in view", (20, 50),
+        cv2.putText(frame, "STAND in view", (20, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(frame, f"registration starts in {left}s", (20, 90),
+        cv2.putText(frame, f"capture starts in {left}s", (20, 90),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 0), 2)
-        # 미리보기는 YOLO 없이 카메라 원본만 → 부드러운 스트림(검출은 느려서 제외)
         web_push(frame)
+        time.sleep(0.02)
 
     for pname, instruct in phases:
         # 3초 카운트다운
@@ -288,7 +299,7 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 15.0):
 
         th = threading.Thread(target=_capture_worker, daemon=True)
         th.start()
-        t_end = time.time() + 4.0
+        t_end = time.time() + 3.0
         while time.time() < t_end:
             frame = cam.read()
             if frame is None:
@@ -536,8 +547,9 @@ def parse_args():
     p.add_argument("--user-id", default="owner_001")
     p.add_argument("--web-port", type=int, default=8080)
     p.add_argument("--no-face", action="store_true", help="얼굴 방향 보조 비활성화")
-    p.add_argument("--grace", type=float, default=15.0,
-                   help="등록 시작 전 준비 대기 초 (브라우저 접속·위치)")
+    p.add_argument("--grace", type=float, default=5.0,
+                   help="브라우저 접속 후 촬영 시작까지 위치 잡을 시간(초). "
+                        "접속 자체는 무한 대기하므로 8080 접속 타이밍은 신경 쓸 필요 없음")
     p.add_argument("--follow", action="store_true",
                    help="바퀴 추종: 인식 결과(bbox)로 /cmd_vel(Twist) 발행 "
                         "(TurtleBot3 Burger). wheel_control.py 재사용 — ROS2 환경 필요")

@@ -37,6 +37,12 @@ PY
 _run() {
     cd "$HERE" || exit 1
     [ -d "$VENV" ] || { echo "[run] venv 없음 → 먼저 'bash robocart_light.sh setup'"; exit 1; }
+    # 중복 실행 방지: 이전 인스턴스가 떠 있으면 먼저 정지(카메라 0 동시 점유 충돌 방지).
+    if pgrep -f robocart_light_main.py >/dev/null 2>&1; then
+        echo "[run] 기존 인스턴스 감지 → 정지 후 재시작 (카메라 충돌 방지)"
+        pkill -f robocart_light_main.py 2>/dev/null
+        sleep 1
+    fi
     # --follow(wheel_control.py → rclpy) 사용 시 ROS2 환경(PYTHONPATH)이 필요.
     # venv 가 --system-site-packages 라도 rclpy 는 PYTHONPATH 로만 들어오므로
     # 항상 source 해둔다(--follow 없으면 영향 없음).
