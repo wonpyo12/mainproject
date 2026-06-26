@@ -15,8 +15,8 @@ ESP32 스케치(mg996r_control.ino)와 동일하게 9600 baud 사용.
 
 실행:
   source /opt/ros/humble/setup.bash
-  python3 raspi_cmd_bridge.py                 # 기본 포트 /dev/ttyUSB0
-  python3 raspi_cmd_bridge.py --port /dev/ttyACM0 --baud 9600
+  python3 raspi_cmd_bridge_esp32.py                 # 기본 포트 /dev/ttyUSB0
+  python3 raspi_cmd_bridge_esp32.py --port /dev/ttyACM0 --baud 9600
 """
 import argparse
 import sys

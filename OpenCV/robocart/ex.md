@@ -106,7 +106,7 @@ bash raspi_mjpeg_launch.sh        # 켜둔 채로 둠
 
 ### 2단계 — VM에서 인식 프로그램 실행
 ```bash
-cd /home/seohee/mainproject/OpenCV/Opencv/robocart
+cd /home/seohee/mainproject/OpenCV/robocart
 ./venv/bin/python robocart_main.py --mjpeg http://<라파IP>:8090/stream --web
 # 콘솔에 "[웹] 실행 화면: http://localhost:8080" 뜨면 준비 완료
 ```

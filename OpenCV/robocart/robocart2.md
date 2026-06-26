@@ -8,7 +8,7 @@
 진행 순서: **사용자 인식(완료) → 일정 거리 유지 → 사용자 추종**
 
 > 이번 문서 범위에서 **유실 시 카메라 모터 재탐색(pan 서보) 기능은 제외**한다.
-> 바퀴 제어는 카메라 모터 제어 파일(raspi_cmd_bridge.py 등)을 건드리지 않고
+> 바퀴 제어는 카메라 모터 제어 파일(raspi_cmd_bridge_esp32.py 등)을 건드리지 않고
 > **새 파일([wheel_control.py](wheel_control.py))로 분리**해 구현한다.
 
 ## 2. 하드웨어 / 통신 전제
@@ -108,7 +108,7 @@ ros2 topic echo /cmd_vel
 | `wheel_control.py` (신규) | WheelFollower: bbox→Twist 변환·발행, 단독 `--test` 점검 모드 |
 | `robocart_main.py` (최소 수정) | `--follow` 인자 + run_tracking 루프에 `follower.update()` 훅 1곳 |
 
-> 카메라 모터 제어 파일(raspi_cmd_bridge.py / .sh)은 **수정하지 않음.**
+> 카메라 모터 제어 파일(raspi_cmd_bridge_esp32.py / .sh)은 **수정하지 않음.**
 
 ## 10. 제외 범위 (이번 단계)
 

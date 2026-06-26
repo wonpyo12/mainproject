@@ -13,7 +13,7 @@ SmartCart 라즈베리파이4 — C920 네이티브 MJPEG HTTP 송출 (디코드
 
 전송 경로 분리(하이브리드):
   영상 = 이 HTTP MJPEG (ROS2 안 거침)
-  명령 = ROS2 /robocart/cmd (raspi_cmd_bridge.py 그대로)
+  명령 = ROS2 /robocart/cmd (raspi_cmd_bridge_esp32.py 그대로)
 
 실행:
   python3 raspi_mjpeg_server.py                       # http://<RPI_IP>:8090/stream

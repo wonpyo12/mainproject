@@ -3,7 +3,7 @@
 사용자 유실(`searching`) 상태 진입 시, ESP32가 MG996R 서보모터를 좌우로 회전시켜 카메라를 pan하며 재탐색하는 코드입니다.
 
 - 코드: [mg996r_control/mg996r_control.ino](mg996r_control/mg996r_control.ino)
-- 기획서: `OpenCV/Opencv/robocart/scan_motor_plan.md`
+- 기획서: `OpenCV/robocart/scan_motor_plan.md`
 
 ## 전체 흐름
 

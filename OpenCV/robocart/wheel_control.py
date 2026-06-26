@@ -12,7 +12,7 @@ robocart_main.py 의 사용자 인식 결과(bbox)를 받아 /cmd_vel (geometry_
   - 안전: 미추적(is_tracking=False)이면 즉시 정지, 속도 상한 제한, (1차엔)후진 금지
 
 주의:
-  - 카메라 pan 서보(ESP32, raspi_cmd_bridge.py)와는 완전히 별개 경로다.
+  - 카메라 pan 서보(ESP32, raspi_cmd_bridge_esp32.py)와는 완전히 별개 경로다.
   - 유실 시 카메라 모터 재탐색 기능은 이번 단계 제외.
 
 사용:

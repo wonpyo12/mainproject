@@ -2,7 +2,7 @@
 # 라즈베리파이4 — C920 MJPEG HTTP 패스스루 송출 실행
 #
 # usb_cam(ROS2) 대신 사용. DDS를 거치지 않고 영상을 HTTP로 직접 송출하여
-# WiFi 불안정·RPi CPU 포화 문제를 회피한다. (명령은 여전히 raspi_cmd_bridge.py + ROS2)
+# WiFi 불안정·RPi CPU 포화 문제를 회피한다. (명령은 여전히 raspi_cmd_bridge_esp32.py + ROS2)
 #
 # 사전 조건: sudo apt install ffmpeg
 # 실행:      bash raspi_mjpeg_launch.sh

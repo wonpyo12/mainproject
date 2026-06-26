@@ -24,7 +24,7 @@ else
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROBOCART_DIR="$SCRIPT_DIR/../OpenCV/Opencv/robocart"
+ROBOCART_DIR="$SCRIPT_DIR/../OpenCV/robocart"
 
 echo "=================================================="
 echo "  SmartCart — VMware 영상처리 노드"
