@@ -8,6 +8,7 @@ import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
 import { MembersView } from './views/MembersView';
 import { CameraView } from './views/CameraView';
+import { MapView } from './views/MapView';
 import { fetchMockData } from './api';
 import { io } from 'socket.io-client';
 
@@ -269,6 +270,8 @@ export default function App() {
     body = <AlertsView alerts={alerts} onDismiss={handleDismissAlert} />;
   } else if (currentView === 'members') {
     body = <MembersView />;
+  } else if (currentView === 'map') {
+    body = <MapView />;
   } else {
     body = <EmptyView title={tk} />;
   }
