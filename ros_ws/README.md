@@ -15,16 +15,9 @@ VMware(노트북)와 RPi4(로봇 탑재)가 ROS2 DDS로 통신하는 분산 구�
 
 ### RPi4 — 터미널 1: 카메라 영상 송출
 
-**방법 A — ROS2 토픽 (기본)**
 ```bash
-bash raspi_camera_launch.sh
-# 발행 토픽: /robocart/image_raw/compressed
-```
-
-**방법 B — HTTP MJPEG (WiFi 불안정·CPU 포화 시 대안)**
-```bash
-bash raspi_mjpeg_launch.sh
-# 스트림: http://<RPI_IP>:8090/stream
+bash raspi_camera.sh ros2   # ROS2 토픽으로 송출 (기본)
+bash raspi_camera.sh mjpeg  # HTTP MJPEG 송출 (WiFi 불안정·CPU 포화 시 대안)
 ```
 
 ### RPi4 — 터미널 2: 모터 명령 수신 (ESP32 연결)
@@ -54,9 +47,9 @@ bash robocart.sh stop
 
 | 파일 | 역할 |
 |------|------|
-| `raspi_camera_launch.sh` | C920 카메라 영상을 ROS2 토픽으로 발행 (usb_cam 패키지) |
-| `raspi_mjpeg_launch.sh` | C920 영상을 HTTP MJPEG으로 패스스루 송출 (ffmpeg, ROS2 불필요) |
-| `raspi_mjpeg_server.py` | `raspi_mjpeg_launch.sh`의 실제 서버 본체 (CPU 부하 없음) |
+| `raspi_camera.sh ros2` | C920 카메라 영상을 ROS2 토픽으로 발행 (usb_cam 패키지) |
+| `raspi_camera.sh mjpeg` | C920 영상을 HTTP MJPEG으로 패스스루 송출 (ffmpeg, ROS2 불필요) |
+| `raspi_mjpeg_server.py` | `raspi_camera.sh mjpeg`의 실제 서버 본체 (CPU 부하 없음) |
 | `raspi_cmd_bridge_esp32.sh` | `raspi_cmd_bridge_esp32.py` 실행 래퍼 (ROS2 환경 설정 포함) |
 | `raspi_cmd_bridge_esp32.py` | ROS2 `/robocart/cmd` 구독 → ESP32 USB 시리얼 전달 브리지 노드 |
 
