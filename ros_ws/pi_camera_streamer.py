@@ -71,7 +71,7 @@ def main():
     # 스트리밍 서버 백그라운드 스레드 기동
     threading.Thread(target=start_camera_server, daemon=True).start()
 
-    # 카메라 초기화 (0번 기본 카메라 연결)
+    # 카메라 초기화 (4번 RealSense RGB 카메라 연결)
     cap = cv2.VideoCapture(0)
     
     # 해상도 설정 (모든 카메라가 지원하는 표준 640x480 해상도로 설정)
