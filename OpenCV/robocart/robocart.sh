@@ -1,14 +1,10 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════════════════════
-# SmartCart robocart 제어 (VMware) — PID 파일 기반 start / stop / restart / status
+# SmartCart robocart 제어 (VMware)
 #
-# 이름 기반 pkill 을 쓰지 않는다. (pkill -f "robocart_main.py" 는 그 문자열을 포함한
-#  제어 셸 자신까지 죽여 self-kill 을 일으켰다.) 대신 시작 시 setsid 로 새 프로세스
-#  그룹을 만들고 그 PID 를 파일에 기록 → 종료는 정확히 그 그룹만 신호로 정리한다.
-#  → self-kill 없음, 옛 프로세스 잔존 없음.
-#
-# 사용 (기존 'python3 robocart_main.py ...' 직접 실행을 대체):
-#   bash robocart.sh start [추가인자]   # 영상=MJPEG(HTTP), 명령=ROS2, 웹출력
+# 사용:
+#   bash robocart.sh ros2 [추가인자]    # ROS2 모드 — 포그라운드 실행 (Ctrl+C 로 종료)
+#   bash robocart.sh start [추가인자]   # MJPEG 모드 — 백그라운드 실행 (PID 관리)
 #   bash robocart.sh start --register   # 새로 등록 후 추종
 #   bash robocart.sh restart            # 정리 후 재시작 (기존 프로필로 추종)
 #   bash robocart.sh stop               # 종료(SIGTERM→필요시 SIGKILL)
@@ -16,8 +12,12 @@
 #   bash robocart.sh log                # 실행 로그 따라보기
 #
 # 환경변수(선택):
-#   PI_CAM_URL    라즈베리파이 MJPEG 스트림 (기본 http://192.168.0.2:8090/stream)
-#   ROS_DOMAIN_ID (기본 42)
+#   PI_CAM_URL         MJPEG 스트림 주소 (기본 http://192.168.0.2:8090/stream)
+#   ROS_DOMAIN_ID      (기본 42)
+#   USE_FASTDDS_UNICAST=1   DDS 유니캐스트 강제 (멀티캐스트 불가 환경)
+#
+# PID 관리 주의: start 는 setsid 로 새 프로세스 그룹을 만들고 PID 를 파일에 기록.
+#   pkill -f 대신 그룹 kill 을 써서 self-kill 및 고아 프로세스 잔존을 방지한다.
 # ══════════════════════════════════════════════════════════════════════════════
 # 주의: set -u 는 쓰지 않는다. ROS(/opt/ros/humble/setup.bash)·venv activate 가
 #       미정의 변수를 다수 참조해 set -u 와 충돌, 출력 없이 즉시 종료된다.
@@ -100,11 +100,36 @@ status() {
     fi
 }
 
+ros2_run() {
+    cd "$ROBO_DIR" || { echo "[ros2] 디렉터리 없음: $ROBO_DIR"; exit 1; }
+    source /opt/ros/humble/setup.bash
+    export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
+
+    FASTDDS_XML="$ROBO_DIR/../../ros_ws/fastdds_vmware.xml"
+    if [ "${USE_FASTDDS_UNICAST:-0}" = "1" ]; then
+        export FASTRTPS_DEFAULT_PROFILES_FILE="$(realpath "$FASTDDS_XML" 2>/dev/null || echo "$FASTDDS_XML")"
+        echo "[DDS] 유니캐스트 프로파일 사용: $FASTRTPS_DEFAULT_PROFILES_FILE"
+    else
+        echo "[DDS] 기본 디스커버리(멀티캐스트) 사용 — 연결 안 되면 USE_FASTDDS_UNICAST=1 로 재실행"
+    fi
+
+    [ -f venv/bin/activate ] && source venv/bin/activate
+
+    echo "=================================================="
+    echo "  SmartCart — ROS2 모드"
+    echo "  ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
+    echo "  구독: /robocart/image_raw/compressed  (라즈베리파이 카메라)"
+    echo "  발행: /robocart/cmd                   (ESP32 모터 명령)"
+    echo "=================================================="
+    python3 robocart_main.py --ros2 "$@"
+}
+
 case "${1:-}" in
+    ros2)    shift; ros2_run "$@";;
     start)   shift; start "$@";;
     stop)    stop;;
     restart) shift; stop; sleep 1; start "$@";;
     status)  status;;
     log)     tail -f "$LOG";;
-    *) echo "사용법: bash robocart.sh {start|stop|restart|status|log} [추가인자]";;
+    *) echo "사용법: bash robocart.sh {ros2|start|stop|restart|status|log} [추가인자]";;
 esac

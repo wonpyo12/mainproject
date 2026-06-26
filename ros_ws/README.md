@@ -36,10 +36,14 @@ bash raspi_cmd_bridge_esp32.sh --port /dev/ttyACM0  # ESP32가 ACM 포트일 때
 
 ### VMware — 터미널 1: 인식 노드 실행
 ```bash
-bash vmware_run.sh             # 일반 실행
-bash vmware_run.sh --register  # 사용자 등록 모드
-bash vmware_run.sh --reset     # 등록 초기화
-# 방법 B 사용 시: robocart_main.py --mjpeg http://<RPI_IP>:8090/stream 직접 실행
+# OpenCV/robocart/ 에서 실행
+bash robocart.sh ros2             # ROS2 모드 (Ctrl+C 로 종료)
+bash robocart.sh ros2 --register  # 사용자 등록 모드
+bash robocart.sh ros2 --reset     # 등록 초기화
+
+# MJPEG 모드 (방법 B 사용 시, 백그라운드 실행)
+bash robocart.sh start
+bash robocart.sh stop
 ```
 
 ---
@@ -60,7 +64,8 @@ bash vmware_run.sh --reset     # 등록 초기화
 
 | 파일 | 역할 |
 |------|------|
-| `vmware_run.sh` | ROS2 환경 설정 후 `robocart_main.py --ros2` 실행 |
+| `OpenCV/robocart/robocart.sh ros2` | ROS2 모드 실행 (환경 설정 포함) |
+| `OpenCV/robocart/robocart.sh start/stop` | MJPEG 모드 백그라운드 실행 (PID 관리) |
 
 ### DDS 설정 (멀티캐스트 불가 환경 전용)
 
