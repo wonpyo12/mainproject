@@ -1,118 +1,136 @@
-# 스마트 장바구니 바퀴 추종 제어 기획서 (TurtleBot3 Burger)
+# 작업 기록 — 2단계 tracking-by-detection 최적화 (2026-06-18)
 
-## 1. 개요
+> **처리 방식: 분산 처리** — `robocart_main.py` (VMware에서 실행)  
+> KCF 경량 추적기를 추가해 무거운 YOLO+ReID 검출 사이 프레임을 보간한다.
 
-[robocart.md](robocart.md)에서 구현한 **등록 사용자 인식**(ReID 기반, 완료)을 입력으로,
-**TurtleBot3 Burger**의 바퀴를 움직여 사용자를 일정 거리에서 따라가는 기능을 단계적으로 구현한다.
+---
 
-진행 순서: **사용자 인식(완료) → 일정 거리 유지 → 사용자 추종**
+## 1. 목표
 
-> 이번 문서 범위에서 **유실 시 카메라 모터 재탐색(pan 서보) 기능은 제외**한다.
-> 바퀴 제어는 카메라 모터 제어 파일(raspi_cmd_bridge_esp32.py 등)을 건드리지 않고
-> **새 파일([wheel_control.py](wheel_control.py))로 분리**해 구현한다.
+영상=MJPEG 하이브리드 전환(이전 작업) 이후 남은 과제 중 **2단계 tracking-by-detection**을 구현.
 
-## 2. 하드웨어 / 통신 전제
+> 무거운 검출(YOLO+ReID)을 N프레임마다 + KCF 경량 추적 보간  
+> → VM 렉 감소, 추종 부드럽게 (신원 재확인은 주기/재획득 시 ReID로 유지)
 
-- 로봇: **TurtleBot3 Burger** (차동구동 2륜 + OpenCR + 라즈베리파이)
-- 주행 명령: ROS2 표준 **`/cmd_vel` (geometry_msgs/Twist)**
-  - `linear.x` = 전후진 선속도(m/s), `angular.z` = 회전 각속도(rad/s)
-- 모터 구동은 **TurtleBot3 표준 스택(turtlebot3_bringup)**이 `/cmd_vel`을 구독해 처리.
-  → 별도 모터 드라이버/시리얼 코드 없이 `/cmd_vel`만 발행하면 된다.
-- Burger 속도 한계: 선속도 0.22 m/s, 각속도 2.84 rad/s (코드에서 더 보수적으로 운용)
+대상 파일: `robocart_main.py`
 
-## 3. 전체 구조
+---
 
-```text
-[robocart_main.py 인식]
-   draw_bbox(추적 박스) + is_tracking
-        ↓  (--follow 시 매 프레임 호출)
-[wheel_control.py / WheelFollower]
-   거리 추정 + 좌우 편차 → (선속도 v, 각속도 w)
-        ↓  ROS2 /cmd_vel (Twist)
-[turtlebot3_bringup] → OpenCR → 바퀴
+## 2. 기존 구조 파악
+
+- 이미 `DetectionWorker`(백그라운드 스레드)가 YOLO+Pose+ReID를 비동기 처리.
+- 메인 루프는 매 프레임 워커에 제출하고 최신 결과를 논블로킹으로 받아 그림.
+- **문제점**
+  1. 무거운 검출이 끝날 때까지 박스가 그 자리에 멈춰 끊겨 보임.
+  2. 매 프레임 제출로 워커가 코어를 계속 점유 → VM 렉.
+
+---
+
+## 3. 구현 내용 (`robocart_main.py`)
+
+### 3-1. 상수 추가
+```python
+DETECT_INTERVAL = 6     # 추종 중 무거운 검출 제출 주기 (1=매 프레임)
+KCF_MAX_AGE     = 45    # KCF 단독 보간 허용 최대 프레임 (초과 시 매 프레임 재검출)
 ```
 
-- 카메라 pan 서보(`/robocart/cmd`, ESP32, [scan_motor_plan.md](scan_motor_plan.md))와는 **완전히 별개 경로.**
+### 3-2. KCF 경량 추적기 — `BoxTracker` 클래스 신설
+- `cv2.TrackerKCF`(빌드 따라 `cv2.legacy` 폴백) 래퍼.
+- `init`/`update`/`deinit`, 추적 실패 시 `ok=False` → 메인 루프가 즉시 재검출.
 
-## 4. 거리 추정 (센서 없이 단일 카메라)
+### 3-3. `DetectionWorker`에 `seq` 추가
+- 워커가 새 결과를 낼 때마다 `seq++`.
+- 메인 루프가 `seq` 변동(=새 검출 도착)을 감지해 그때만 KCF를 재고정.
 
-깊이 센서 없이, **bbox 높이(픽셀) 비율을 거리의 역지표**로 사용한다.
+### 3-4. `run_tracking` 메인 루프 재구성 (핵심)
+프레임마다:
+1. **검출 제출 여부 결정**
+   - 추종 안정 + KCF 살아있음 → `DETECT_INTERVAL`마다만 제출 (그 사이는 보간).
+   - 탐색·확인·소실·KCF실패·`KCF_MAX_AGE` 초과 → 매 프레임 제출(빠른 재획득/신원 재확인).
+2. **새 검출(fresh) 도착 시** → ReID로 신원 (재)확인, 매칭이면 KCF를 검출 위치에 재고정.
+3. **검출 사이 프레임** → `kcf.update()`로 bbox 보간.
+4. **그리기** → 검출이든 KCF든 `draw_bbox` 하나로 통일, 보간 프레임은 라벨에 `~` 표기.
+5. **HUD** → 현재 프레임이 `DET`(검출) / `KCF`(보간) 중 무엇인지 표시.
 
-- `height_ratio = bbox높이 / 화면높이`
-- 목표값 `TARGET_HEIGHT_RATIO`(예 0.55)보다 작으면(=멀리, 작게 보임) → 전진
-- 크면(=가까이) → 정지 (1차엔 후진 금지)
-- 오차가 `HEIGHT_DEADBAND` 이내면 정지 (떨림 방지)
+---
 
-정확도는 낮지만(키·자세 영향) 1차 구현으로 충분. 추후 LDS(라이다)·거리 센서로 보강 검토.
+## 4. 검증 중 발견·수정한 버그
 
-## 5. 추종 제어 로직 (1차, P 제어)
+```python
+# Before (무한 재귀 → 종료 시마다 RecursionError)
+def destroy_windows() -> None:
+    if not _web_enabled:
+        destroy_windows()        # 자기 자신 호출!
 
-- **전후진(linear.x)**: `err = TARGET_HEIGHT_RATIO − height_ratio` → `v = KP_LIN·err` (상한 클램프)
-- **회전(angular.z)**: `err_c = (bbox중심x − 화면중심x)/(화면폭/2)` → `w = −KP_ANG·err_c` (상한 클램프)
-  - 대상이 우측(+)이면 시계방향(z 음수)으로 회전해 중앙 정렬
-- 두 출력을 Twist로 합쳐 발행 → TurtleBot3가 좌/우 바퀴 속도로 변환
-- 진동/오버슈트 시 D항 추가 검토(추후 단계)
+# After
+def destroy_windows() -> None:
+    if not _web_enabled:
+        cv2.destroyAllWindows()
+```
 
-## 6. 안전 설계
+---
 
-- **미추적/유실 시 즉시 정지** (`is_tracking=False` → v=w=0) — 추종보다 항상 우선
-- 운용 속도 상한(`MAX_LIN`, `MAX_ANG`)을 Burger 하드 한계보다 낮게
-- 1차엔 후진 금지(`ALLOW_REVERSE=False`) — 너무 가까우면 정지만
-- 프로그램 종료 시 반드시 정지 명령 발행
+## 5. 실행 검증 (카메라 없이 합성 영상 end-to-end)
 
-## 7. 단계별 개발 계획 (하나씩 추가)
+카메라가 없어 **등록 프로필 + 실제 모델(YOLO·MediaPipe·ResNet50)** 을 그대로 쓰고,
+등록 샘플(front)을 움직이는 합성 영상으로 `run_tracking`을 헤드리스 구동.
+(하니스: `test_verify_tracking.py`)
 
-### ✅ Phase 0. 인식 (완료)
-- robocart_main.py 의 `TrackingState` + `draw_bbox`를 추종 입력으로 사용.
+| 항목 | 값 | 의미 |
+|---|---|---|
+| 메인 루프 프레임 | 131 | — |
+| 무거운 검출 실행 | 5 (0.4/s) | 매 프레임 아님 |
+| **검출/메인 비율** | **0.04** | 1.0=매프레임 → 약 96% 절감 |
+| KCF update | 10 | 검출 사이 보간 동작 |
+| KCF 재고정(ReID 매칭) | 4 | 신원 주기적 재확인 |
 
-### ▶ Phase 1. 인식 → 바퀴 제어 확인 (이번 작업)
-- 새 파일 `wheel_control.py`(WheelFollower) 작성: bbox → `/cmd_vel` 발행.
-- robocart_main.py 에 `--follow` 훅만 최소 추가(인식 로직은 그대로).
-- **확인 방법**: 8번 참고 (`/cmd_vel` echo 또는 웹 HUD의 v/w 값).
+→ **PASS**: 무거운 검출은 드물게만 돌고 그 사이를 KCF가 메우며, 검출마다 ReID로 신원 재확인.
+점수 Total 0.83 / ReID 0.84, 박스 정렬·HUD(`KCF`)·패널 렌더 정상.
 
-### Phase 2. 거리 유지 정밀화
-- 캘리브레이션으로 `TARGET_HEIGHT_RATIO` 보정, 게인/데드밴드 튜닝.
+**한계**
+- 이 PC는 CPU-only라 검출이 ~1.6초/회로 느림 → 빠른 합성 이동에선 낡은 bbox에 KCF가
+  재고정돼 박스가 인물 밖으로 밀림. 이동 속도를 보행 수준으로 낮추면 깔끔히 추종.
+- 실제 카메라/ROS2 경로는 VM에서 직접 띄워 확인 필요.
 
-### Phase 3. 좌우 추종 안정화
-- 회전 게인 튜닝, 중앙 정렬 확인, 전후진과 합성 안정화.
+---
 
-### Phase 4. 실차 주행 튜닝
-- 급출발·급정지 완화(저크 제한), P→PD 보강.
+## 6. 실행 방법
 
-### Phase 5. (추후) 유실 대응
-- 유실 시 정지 유지. 카메라 pan 재탐색 연계는 별도 단계에서 재설계.
-
-## 8. 이번 단계(Phase 1) 확인 방법
-
+### RPi4 — 카메라 영상 송출
 ```bash
-# (선택) 인식 없이 배선/구동만 먼저 점검 — 로봇이나 시뮬레이터가 떠 있을 때
-source /opt/ros/humble/setup.bash
-python3 wheel_control.py --test spin --secs 2     # 2초 제자리 회전 후 정지
-python3 wheel_control.py --test forward --secs 1  # 1초 전진 후 정지
-
-# 인식 연동 실행 (영상=MJPEG, 웹 출력 + 바퀴 추종)
-bash robocart.sh start --follow
-
-# 다른 터미널에서 발행 명령 확인
-source /opt/ros/humble/setup.bash
-ros2 topic echo /cmd_vel
+# ros_ws/ 에서 실행
+bash raspi_camera.sh ros2    # ROS2 토픽 방식
+bash raspi_camera.sh mjpeg   # HTTP MJPEG 방식 (WiFi 불안정 시)
 ```
 
-- 웹 화면(`http://localhost:8080`) 우측 하단에 `WHEEL v=.. w=..` 가 표시됨.
-- 등록 사용자가 **멀어지면 v>0(전진), 좌/우로 가면 w 부호가 바뀜**, 유실 시 v=w=0.
+### VMware — 인식 프로그램 실행
+```bash
+# OpenCV/robocart/ 에서 실행
+bash robocart.sh ros2            # ROS2 모드
+bash robocart.sh start           # MJPEG 모드 (백그라운드)
+bash robocart.sh start --register  # 새로 등록 후 추종
+```
 
-## 9. 신규/수정 파일
+### 브라우저로 확인
+```
+http://localhost:8080
+```
+- 좌상단 HUD: `KCF`(보간) ↔ `DET`(검출) 전환
+- 녹색 박스: 검출 사이에도 KCF로 부드럽게 추종 (라벨 끝 `~` = 보간 중)
+- 우측 패널: ReID/Color/Shape 점수, TRACKING 상태
 
-| 파일 | 내용 |
-|------|------|
-| `wheel_control.py` (신규) | WheelFollower: bbox→Twist 변환·발행, 단독 `--test` 점검 모드 |
-| `robocart_main.py` (최소 수정) | `--follow` 인자 + run_tracking 루프에 `follower.update()` 훅 1곳 |
+---
 
-> 카메라 모터 제어 파일(raspi_cmd_bridge_esp32.py / .sh)은 **수정하지 않음.**
+## 7. 튜닝 가이드
 
-## 10. 제외 범위 (이번 단계)
+- VM에서 검출이 빠르면 `DETECT_INTERVAL`(현재 6)을 **낮춰** 정밀도↑.
+- 렉이 심하면 `DETECT_INTERVAL`을 **올려**(8~10) 부드러움↑.
 
-- 유실 시 카메라 pan 재탐색
-- 장애물 회피 / 라이다 활용
-- 경로 계획(맵 기반 이동)
-- 다중 사용자 추종 대상 전환
+---
+
+## 8. 변경 파일 요약
+
+| 파일 | 변경 |
+|---|---|
+| `robocart_main.py` | `BoxTracker` 신설, `DetectionWorker.seq` 추가, `run_tracking` 2단계 재구성, `destroy_windows` 무한재귀 버그 수정, 상수 2개 추가 |
+| `test_verify_tracking.py` | (신규) 카메라 없이 합성 영상으로 end-to-end 검증하는 하니스 |
