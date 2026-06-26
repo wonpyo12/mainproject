@@ -7,10 +7,16 @@ import { InventoryView } from './views/InventoryView';
 import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
 import { MembersView } from './views/MembersView';
+import { CameraView } from './views/CameraView';
 import { fetchMockData } from './api';
+import { io } from 'socket.io-client';
+
+const BACKEND_URL = 'http://localhost:3000';
+
 
 const NAV = [
   { id: 'dashboard', ko: '대시보드', en: 'Dashboard', icon: 'layout-dashboard' },
+  { id: 'camera', ko: '카메라 모니터링', en: 'Camera Monitor', icon: 'video' },
   { id: 'fleet', ko: '로봇 관리', en: 'Fleet', icon: 'bot' },
   { id: 'inventory', ko: '재고 / RFID', en: 'Inventory', icon: 'package' },
   { id: 'alerts', ko: '알림', en: 'Alerts', icon: 'bell' },
@@ -24,6 +30,7 @@ const NAV2 = [
 
 const TITLES = {
   dashboard: ['대시보드', '실시간 매장 운영 현황'],
+  camera: ['카메라 모니터링', '로봇 카메라 실시간 스트리밍 피드'],
   fleet: ['로봇 관리', '추종 카트 플릿 모니터링 · 제어'],
   inventory: ['재고 / RFID', 'RFID 태그 상품 마스터'],
   alerts: ['알림', '도난 방지 · 배터리 · 추적 이벤트'],
@@ -43,13 +50,87 @@ function NavItem({ item, active, onClick, badge }) {
 }
 
 export default function App() {
-  const [view, setView] = useState('dashboard');
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('cartpilot_is_admin') === 'true');
+  const [view, setView] = useState(() => {
+    const savedAdmin = localStorage.getItem('cartpilot_is_admin') === 'true';
+    return savedAdmin ? 'dashboard' : 'camera';
+  });
   const [selected, setSelected] = useState(null);
   const [t, st] = useState('00:00');
 
   const [apiData, setApiData] = useState(null);
+  const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const [toast, setToast] = useState(null);
+  const [clickCount, setClickCount] = useState(0);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+  };
+
+  // 2초 동안 추가 탭이 없으면 클릭 카운트 초기화
+  useEffect(() => {
+    if (clickCount > 0) {
+      const tId = setTimeout(() => setClickCount(0), 2000);
+      return () => clearTimeout(tId);
+    }
+  }, [clickCount]);
+
+  // 토스트 자동 페이드아웃
+  useEffect(() => {
+    if (toast) {
+      const tId = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(tId);
+    }
+  }, [toast]);
+
+  // 키보드로 "admin" 입력 감지하여 관리자 모드 전환
+  useEffect(() => {
+    let keys = '';
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      keys += e.key.toLowerCase();
+      if (keys.length > 5) keys = keys.slice(-5);
+      if (keys === 'admin') {
+        setIsAdmin((curr) => {
+          const next = !curr;
+          localStorage.setItem('cartpilot_is_admin', String(next));
+          setView(next ? 'dashboard' : 'camera');
+          showToast(next ? '관리자 모드가 활성화되었습니다.' : '사용자 모드(Kiosk)로 전환되었습니다.', 'success');
+          return next;
+        });
+        keys = '';
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleTitleClick = () => {
+    setClickCount((prev) => {
+      const next = prev + 1;
+      if (next >= 5) {
+        setIsAdmin((curr) => {
+          const nextAdmin = !curr;
+          localStorage.setItem('cartpilot_is_admin', String(nextAdmin));
+          setView(nextAdmin ? 'dashboard' : 'camera');
+          showToast(nextAdmin ? '관리자 모드가 활성화되었습니다.' : '사용자 모드(Kiosk)로 전환되었습니다.', 'success');
+          return nextAdmin;
+        });
+        return 0;
+      }
+      return next;
+    });
+  };
+
+  // 경과 시간 계산 헬퍼 함수
+  const calculateMinutesAgo = (isoString) => {
+    if (!isoString) return 0;
+    const diffMs = new Date() - new Date(isoString);
+    return Math.max(0, Math.floor(diffMs / 60000));
+  };
 
   useEffect(() => {
     const tick = () => {
@@ -65,6 +146,17 @@ export default function App() {
     fetchMockData()
       .then(res => {
         setApiData(res);
+        
+        // localStorage에서 기존 로그인 알림 복구 및 경과 시간 갱신
+        const saved = localStorage.getItem('cartpilot_login_alerts');
+        const customAlerts = saved ? JSON.parse(saved) : [];
+        const updatedCustomAlerts = customAlerts.map(a => ({
+          ...a,
+          mins: calculateMinutesAgo(a.timestamp)
+        }));
+
+        setAlerts([...updatedCustomAlerts, ...(res.alerts || [])]);
+        
         // Auto-select first robot if available
         if (res.robots && res.robots.length > 0) {
           setSelected(res.robots[0].id);
@@ -77,6 +169,57 @@ export default function App() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    const socket = io(BACKEND_URL, {
+      auth: { token: 'admin-cartpilot' },
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      console.log('[Socket] Global Web Admin connected');
+    });
+
+    socket.on('user:login', (data) => {
+      console.log('[Socket] user:login received:', data);
+      
+      const newAlert = {
+        level: 'info',
+        cart: 'SYSTEM',
+        ko: `${data.userName} 님이 로그인했습니다.`,
+        mins: 0,
+        timestamp: data.timestamp || new Date().toISOString()
+      };
+
+      setAlerts((prev) => {
+        const nextAlerts = [newAlert, ...prev];
+        // localStorage에 새 로그인 알림 저장
+        const saved = localStorage.getItem('cartpilot_login_alerts');
+        const customAlerts = saved ? JSON.parse(saved) : [];
+        localStorage.setItem('cartpilot_login_alerts', JSON.stringify([newAlert, ...customAlerts]));
+        return nextAlerts;
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  const handleDismissAlert = (index) => {
+    const alertToDismiss = alerts[index];
+    setAlerts((prev) => prev.filter((_, i) => i !== index));
+
+    // 만약 localStorage에 저장된 로그인 알림이라면, localStorage에서도 제거합니다.
+    if (alertToDismiss && alertToDismiss.level === 'info' && alertToDismiss.cart === 'SYSTEM') {
+      const saved = localStorage.getItem('cartpilot_login_alerts');
+      if (saved) {
+        const customAlerts = JSON.parse(saved);
+        const updated = customAlerts.filter(a => a.timestamp !== alertToDismiss.timestamp);
+        localStorage.setItem('cartpilot_login_alerts', JSON.stringify(updated));
+      }
+    }
+  };
 
   if (loading) {
     return (
@@ -103,7 +246,6 @@ export default function App() {
 
   const data = apiData || {};
   const robots = data.robots || [];
-  const alerts = data.alerts || [];
   const sessions = data.sessions || [];
   const inventory = data.inventory || [];
   const metrics = data.metrics || {};
@@ -111,85 +253,116 @@ export default function App() {
   const userInfo = data.userInfo || {};
   const alertCount = alerts.filter(a => a.level === 'urgent' || a.level === 'warn').length;
 
-  const [tk, tken] = TITLES[view] || ['화면', ''];
+  const currentView = isAdmin ? view : 'camera';
+  const [tk, tken] = TITLES[currentView] || ['화면', ''];
 
   let body;
-  if (view === 'dashboard') {
+  if (currentView === 'dashboard') {
     body = <DashboardView selected={selected} setSelected={setSelected} robots={robots} alerts={alerts} sessions={sessions} metrics={metrics} />;
-  } else if (view === 'fleet') {
+  } else if (currentView === 'camera') {
+    body = <CameraView robots={robots} onTitleClick={handleTitleClick} />;
+  } else if (currentView === 'fleet') {
     body = <FleetView selected={selected} setSelected={setSelected} robots={robots} />;
-  } else if (view === 'inventory') {
+  } else if (currentView === 'inventory') {
     body = <InventoryView inventory={inventory} />;
-  } else if (view === 'alerts') {
-    body = <AlertsView alerts={alerts} />;
-  } else if (view === 'members') {
+  } else if (currentView === 'alerts') {
+    body = <AlertsView alerts={alerts} onDismiss={handleDismissAlert} />;
+  } else if (currentView === 'members') {
     body = <MembersView />;
   } else {
     body = <EmptyView title={tk} />;
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark"><Icon name="shopping-cart" size={18} /></div>
-          <div>
-            <div className="brand-name">CartPilot</div>
-            <div className="brand-sub">Robot Console</div>
+    <div className={`shell${!isAdmin ? ' kiosk' : ''}`}>
+      {isAdmin && (
+        <aside className="sidebar">
+          <div className="brand">
+            <div className="brand-mark"><Icon name="shopping-cart" size={18} /></div>
+            <div>
+              <div className="brand-name">CartPilot</div>
+              <div className="brand-sub">Robot Console</div>
+            </div>
           </div>
-        </div>
 
-        {storeInfo.name && (
-          <div className="store-pill">
-            <Icon name="store" size={14} />
-            <span>{storeInfo.name}</span>
-            <Icon name="chevron-down" size={14} style={{ marginLeft: 'auto', color: 'var(--text-3)' }} />
-          </div>
-        )}
+          {storeInfo.name && (
+            <div className="store-pill">
+              <Icon name="store" size={14} />
+              <span>{storeInfo.name}</span>
+              <Icon name="chevron-down" size={14} style={{ marginLeft: 'auto', color: 'var(--text-3)' }} />
+            </div>
+          )}
 
-        <nav className="nav-group">
-          <div className="nav-label">운영</div>
-          {NAV.map((n) => (
-            <NavItem key={n.id} item={n} active={view === n.id} onClick={() => setView(n.id)} badge={n.id === 'alerts' ? alertCount : 0} />
-          ))}
-        </nav>
-        <nav className="nav-group">
-          <div className="nav-label">관리</div>
-          {NAV2.map((n) => (
-            <NavItem key={n.id} item={n} active={view === n.id} onClick={() => setView(n.id)} />
-          ))}
-        </nav>
+          <nav className="nav-group">
+            <div className="nav-label">운영</div>
+            {NAV.map((n) => (
+              <NavItem key={n.id} item={n} active={currentView === n.id} onClick={() => setView(n.id)} badge={n.id === 'alerts' ? alertCount : 0} />
+            ))}
+          </nav>
+          <nav className="nav-group">
+            <div className="nav-label">관리</div>
+            {NAV2.map((n) => (
+              <NavItem key={n.id} item={n} active={currentView === n.id} onClick={() => setView(n.id)} />
+            ))}
+          </nav>
 
-      </aside>
+        </aside>
+      )}
 
       <div className="main">
-        <header className="topbar">
-          <div>
-            <h1 className="page-title">{tk}</h1>
-            <p className="page-sub">{tken}</p>
-          </div>
-          <div className="topbar-right">
-            <div className="search">
-              <Icon name="search" size={15} style={{ color: 'var(--text-3)' }} />
-              <input placeholder="검색" />
-              <span className="kbd">⌘K</span>
+        {isAdmin && (
+          <header className="topbar">
+            <div>
+              <h1 className="page-title">{tk}</h1>
+              <p className="page-sub">{tken}</p>
             </div>
-            <div className="clock"><span className="live-dot" />{t}</div>
-            {alertCount > 0 && (
-              <button className="icon-btn">
-                <Icon name="bell" size={17} />
-                <span className="dot-red" />
-              </button>
-            )}
-            {userInfo.name && (
-              <div className="me">
-                <Avatar name={userInfo.name} size={32} />
+            <div className="topbar-right">
+              <div className="search">
+                <Icon name="search" size={15} style={{ color: 'var(--text-3)' }} />
+                <input placeholder="검색" />
+                <span className="kbd">⌘K</span>
               </div>
-            )}
-          </div>
-        </header>
-        <main className="content">{body}</main>
+              <div className="clock"><span className="live-dot" />{t}</div>
+              {alertCount > 0 && (
+                <button className="icon-btn">
+                  <Icon name="bell" size={17} />
+                  <span className="dot-red" />
+                </button>
+              )}
+              {userInfo.name && (
+                <div className="me">
+                  <Avatar name={userInfo.name} size={32} />
+                </div>
+              )}
+            </div>
+          </header>
+        )}
+        <main className="content" style={!isAdmin ? { padding: '24px 28px' } : undefined}>{body}</main>
       </div>
+
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'var(--text)',
+          color: '#fff',
+          padding: '12px 24px',
+          borderRadius: '8px',
+          fontSize: '13px',
+          fontWeight: 700,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          animation: 'slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) both'
+        }}>
+          <Icon name="shield" size={15} style={{ color: 'var(--green)' }} />
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

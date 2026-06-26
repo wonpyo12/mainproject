@@ -189,15 +189,26 @@ class CartViewModel : ViewModel() {
                 )
             }
             viewModelScope.launch(Dispatchers.Main) {
-                val added = newList.size > _uiState.value.shoppingList.size
-                        || newList.any { new ->
-                            val old = _uiState.value.shoppingList.find { it.id == new.id }
-                            old == null || new.quantity > old.quantity
-                        }
-                _uiState.value = _uiState.value.copy(shoppingList = newList)
-                if (added && newList.isNotEmpty()) {
-                    showVoice("${newList.last().name} 이(가) 카트에 담겼어요.")
+                // 실제로 추가되었거나 수량이 증가한 상품 식별
+                val addedItem = newList.find { new ->
+                    val old = _uiState.value.shoppingList.find { it.id == new.id }
+                    old == null || new.quantity > old.quantity
                 }
+
+                _uiState.value = _uiState.value.copy(shoppingList = newList)
+
+                if (addedItem != null) {
+                    showVoice("${addedItem.name} 이(가) 카트에 담겼어요.")
+                }
+            }
+        }
+
+        // cart:error → 재고 부족 등 실시간 경고 처리
+        SocketManager.on("cart:error") { args ->
+            val json = args[0].toString()
+            val event = gson.fromJson(json, CartErrorEvent::class.java)
+            viewModelScope.launch(Dispatchers.Main) {
+                showVoice(event.message)
             }
         }
     }
@@ -276,3 +287,7 @@ class CartViewModel : ViewModel() {
         SocketManager.disconnect()
     }
 }
+
+data class CartErrorEvent(
+    val message: String
+)

@@ -37,7 +37,7 @@ export function DashboardView({ selected, setSelected, robots = [], alerts = [],
 
   const hasStats = statCards.length > 0;
   const hasFloorOrDetail = hasRobots;
-  const hasBottomRow = hasSessions || hasAlerts;
+  const hasBottomRow = hasSessions;
 
   // Nothing to show at all
   if (!hasStats && !hasFloorOrDetail && !hasBottomRow) {
@@ -114,31 +114,13 @@ export function DashboardView({ selected, setSelected, robots = [], alerts = [],
         </div>
       )}
 
-      {/* Sessions chart + Alerts */}
+      {/* Sessions chart */}
       {hasBottomRow && (
-        <div style={{ display: 'grid', gridTemplateColumns: hasSessions && hasAlerts ? '1.55fr 1fr' : '1fr', gap: 18 }}>
-          {hasSessions && (
-            <Card>
-              <SectionHead title="시간대별 쇼핑 세션" en="Sessions / hour" />
-              <SessionsChart data={sessions} />
-            </Card>
-          )}
-          {hasAlerts && (
-            <Card pad={0}>
-              <div style={{ padding: '18px 18px 6px' }}><SectionHead title="최근 알림" en="Alerts" /></div>
-              <div>
-                {alerts.slice(0, 4).map((a, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 11, padding: '11px 18px', borderTop: '1px solid var(--border)' }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 99, marginTop: 6, flex: 'none', background: a.level === 'urgent' ? 'var(--red)' : a.level === 'warn' ? 'var(--amber)' : 'var(--text-3)' }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}><span className="mono">{a.cart}</span> · {a.ko}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{a.mins}분 전</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18 }}>
+          <Card>
+            <SectionHead title="시간대별 쇼핑 세션" en="Sessions / hour" />
+            <SessionsChart data={sessions} />
+          </Card>
         </div>
       )}
     </div>

@@ -76,7 +76,7 @@ const completeOrder = async (req, res) => {
     await redis.del(cartKey);
 
     // [Redis] 로봇 상태 → RETURNING
-    await redis.hset(robotStatusKey, {
+    await redis.hmset(robotStatusKey, {
       status:      'RETURNING',
       userId:      '',
       completedAt: new Date().toISOString(),

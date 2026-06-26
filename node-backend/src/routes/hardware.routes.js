@@ -8,4 +8,7 @@ router.post('/qr-scan', hardwareController.qrScan);
 // [MySQL + Redis + WebSocket] RFID 태그 인식 → 실시간 장바구니 업데이트 + 앱 푸시
 router.post('/rfid', hardwareController.rfidScan);
 
+// 실시간 카메라 비디오 피드 프록시 (CORS/포트 오리진 이슈 우회)
+router.get('/video-feed', hardwareController.videoFeed);
+
 module.exports = router;
