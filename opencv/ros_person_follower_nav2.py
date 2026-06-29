@@ -12,7 +12,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateToPose
 
 class RobotController(Node):
@@ -27,11 +27,42 @@ class RobotController(Node):
         # Nav2 NavigateToPose 액션 클라이언트 생성
         self.nav_to_pose_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         
+        # AMCL 포즈 구독자 생성 (시작 위치 자동 저장용)
+        self.amcl_pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped,
+            'amcl_pose',
+            self.amcl_pose_callback,
+            10
+        )
+        
+        # 시작 위치 저장 변수 (기본값은 0, 0, 0)
+        self.start_x = 0.0
+        self.start_y = 0.0
+        self.start_yaw = 0.0
+        self.has_start_pose = False
+        
         # 상태 변수: FOLLOW (추종), RETURN (복귀)
         self.state = "FOLLOW"
         self.nav_goal_sent = False
         
         self.get_logger().info("ROS2 Robot Controller Node Initialized (Nav2 Support).")
+
+    def amcl_pose_callback(self, msg):
+        """AMCL로부터 현재 로봇 위치를 받아 최초 위치를 시작 위치로 자동 저장"""
+        if not self.has_start_pose:
+            self.start_x = msg.pose.pose.position.x
+            self.start_y = msg.pose.pose.position.y
+            
+            # 쿼터니언을 Yaw(각도)로 변환
+            q = msg.pose.pose.orientation
+            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            self.start_yaw = math.atan2(siny_cosp, cosy_cosp)
+            
+            self.has_start_pose = True
+            self.get_logger().info(
+                f"★★ 시작 위치 자동 저장 완료! (AMCL 수신) -> x={self.start_x:.2f}, y={self.start_y:.2f}, yaw={self.start_yaw:.2f} ★★"
+            )
 
     def send_stop(self):
         """로봇 정지 명령 발행"""
@@ -92,9 +123,9 @@ class RobotController(Node):
     def nav_goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().info('Goal rejected by Nav2 server.')
+            self.get_logger().info('Goal rejected by Nav2 server. Staying IDLE.')
             self.nav_goal_sent = False
-            self.state = "FOLLOW"
+            self.state = "IDLE"
             return
             
         self.get_logger().info('Goal accepted by Nav2 server. Navigating...')
@@ -103,9 +134,10 @@ class RobotController(Node):
         
     def nav_get_result_callback(self, future):
         status = future.result().status
-        self.get_logger().info(f'Navigation finished with status code: {status}. Returning to FOLLOW mode.')
+        self.get_logger().info(f'Navigation finished with status code: {status}. Staying at base (IDLE).')
         self.nav_goal_sent = False
-        self.state = "FOLLOW"
+        self.state = "IDLE"
+        self.send_stop()  # 안전하게 모터 속도 0으로 최종 정지 명령 발행
 
 
 class VideoCaptureThreaded:
@@ -222,7 +254,7 @@ def console_input_thread(node):
     """터미널 사용자 입력을 감시하여 모드를 제어하는 스레드"""
     print("\n" + "="*50)
     print("  [터미널 제어 명령어 목록]")
-    print("  - '복귀' 입력 시: 제자리를 찾아 맵의 시작점(0.0, 0.0)으로 복귀합니다.")
+    print("  - '복귀' 입력 시: 제자리를 찾아 최초 시작한 위치(AMCL 기록값)로 복귀합니다.")
     print("  - '추종' 입력 시: 다시 사람을 추종(FOLLOW) 모드로 전환합니다.")
     print("="*50 + "\n")
     
@@ -233,7 +265,9 @@ def console_input_thread(node):
                 if node.state != "RETURN":
                     node.state = "RETURN"
                     node.send_stop()  # 즉시 카메라 추종 속도를 멈춤
-                    node.send_nav_goal(0.0, 0.0, 0.0) # 원점 복귀 목표 전송
+                    if not node.has_start_pose:
+                        node.get_logger().warn("AMCL 시작 위치가 아직 저장되지 않았습니다! 기본값 (0.0, 0.0)으로 복귀를 시도합니다.")
+                    node.send_nav_goal(node.start_x, node.start_y, node.start_yaw) # 저장된 시작 위치로 복귀 목표 전송
             elif cmd == "추종":
                 if node.state != "FOLLOW":
                     node.get_logger().info("추종 모드로 수동 복귀합니다.")
@@ -606,10 +640,17 @@ def main():
                 # ── [RETURN 모드] 네비게이션 복귀 (속도는 Nav2가 /cmd_vel로 직접 통제함) ──
                 cv2.putText(display_frame, "STATUS: RETURNING TO HOME (Nav2)", (20, 40),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(display_frame, "Target Coordinate: x=0.0, y=0.0, yaw=0.0", (20, 80),
+                cv2.putText(display_frame, f"Target: x={node.start_x:.2f}, y={node.start_y:.2f}, yaw={node.start_yaw:.2f}", (20, 80),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(display_frame, "Type '추종' in Terminal to resume following.", (20, 110),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 255), 2)
+
+            elif node.state == "IDLE":
+                # ── [IDLE 모드] 대기 상태 (복귀 완료 후 또는 수동 대기) ──
+                cv2.putText(display_frame, "STATUS: IDLE (Waiting at Base)", (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 2)
+                cv2.putText(display_frame, "Type '추종' in Terminal to start following.", (20, 80),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
             cv2.putText(display_frame, f"FPS: {fps:.1f}", (w_img - 110, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
