@@ -13,7 +13,56 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
+from sensor_msgs.msg import LaserScan
 from nav2_msgs.action import NavigateToPose
+
+class PIDController:
+    """
+    비례-적분-미분(PID) 제어기 클래스
+    """
+    def __init__(self, kp, ki, kd, max_out, min_out):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.max_out = max_out
+        self.min_out = min_out
+        
+        self.prev_error = 0.0
+        self.integral = 0.0
+        self.last_time = time.time()
+
+    def update(self, error):
+        current_time = time.time()
+        dt = current_time - self.last_time
+        if dt <= 0.0:
+            dt = 0.03 # 기본 루프 대기 시간 (30ms)
+            
+        # P 항 (비례)
+        p_term = self.kp * error
+        
+        # I 항 (적분)
+        self.integral += error * dt
+        # Anti-windup (적분 누적 제한)
+        self.integral = max(-1.0, min(1.0, self.integral))
+        i_term = self.ki * self.integral
+        
+        # D 항 (미분)
+        derivative = (error - self.prev_error) / dt
+        d_term = self.kd * derivative
+        
+        # 제어 출력 합산 및 제한값(Saturation) 적용
+        output = p_term + i_term + d_term
+        output = max(self.min_out, min(self.max_out, output))
+        
+        # 상태 기록 및 시간 업데이트
+        self.prev_error = error
+        self.last_time = current_time
+        return output
+
+    def reset(self):
+        self.prev_error = 0.0
+        self.integral = 0.0
+        self.last_time = time.time()
 
 class RobotController(Node):
     """
@@ -35,17 +84,32 @@ class RobotController(Node):
             10
         )
         
+        # 2D 라이다 센서 데이터 구독자 생성
+        self.scan_sub = self.create_subscription(
+            LaserScan,
+            'scan',
+            self.scan_callback,
+            10
+        )
+        self.latest_scan = None
+        
         # 시작 위치 저장 변수 (기본값은 0, 0, 0)
         self.start_x = 0.0
         self.start_y = 0.0
         self.start_yaw = 0.0
         self.has_start_pose = False
         
-        # 상태 변수: FOLLOW (추종), RETURN (복귀)
+        # PID 제어기 초기화 (비례, 적분, 미분, 최대 출력, 최소 출력)
+        # 선속도 PID (목표거리 유지: 0.8m)
+        self.linear_pid = PIDController(kp=0.35, ki=0.005, kd=0.02, max_out=0.15, min_out=-0.10)
+        # 각속도 PID (목표각도 유지: 정면 0rad)
+        self.angular_pid = PIDController(kp=0.55, ki=0.005, kd=0.02, max_out=0.7, min_out=-0.7)
+        
+        # 상태 변수: FOLLOW (추종), RETURN (복귀), IDLE (대기)
         self.state = "FOLLOW"
         self.nav_goal_sent = False
         
-        self.get_logger().info("ROS2 Robot Controller Node Initialized (Nav2 Support).")
+        self.get_logger().info("ROS2 Robot Controller Node Initialized (Nav2 & Sensor Fusion & PID Support).")
 
     def amcl_pose_callback(self, msg):
         """AMCL로부터 현재 로봇 위치를 받아 최초 위치를 시작 위치로 자동 저장"""
@@ -63,6 +127,15 @@ class RobotController(Node):
             self.get_logger().info(
                 f"★★ 시작 위치 자동 저장 완료! (AMCL 수신) -> x={self.start_x:.2f}, y={self.start_y:.2f}, yaw={self.start_yaw:.2f} ★★"
             )
+
+    def scan_callback(self, msg):
+        """라이다 센서 데이터를 실시간으로 캐시"""
+        self.latest_scan = msg
+
+    def reset_pids(self):
+        """PID 제어기 적분 및 오차 누적 초기화"""
+        self.linear_pid.reset()
+        self.angular_pid.reset()
 
     def send_stop(self):
         """로봇 정지 명령 발행"""
@@ -271,6 +344,7 @@ def console_input_thread(node):
             elif cmd == "추종":
                 if node.state != "FOLLOW":
                     node.get_logger().info("추종 모드로 수동 복귀합니다.")
+                    node.reset_pids() # PID 상태 초기화
                     node.state = "FOLLOW"
                     node.nav_goal_sent = False
         except KeyboardInterrupt:
@@ -543,6 +617,7 @@ def main():
                     last_person_cy = shared_last_person_cy
                     last_body_height_ratio = shared_last_body_height_ratio
                     annotated_frame = shared_last_pose_landmarks
+                    target_track_id = shared_target_track_id
                     inference_time_ms = shared_inference_time_ms
 
                 if person_detected and last_person_cx is not None and last_person_cy is not None and last_body_height_ratio is not None:
@@ -561,38 +636,72 @@ def main():
                         person_detected = False
 
                 if person_detected and last_person_cx is not None and last_person_cy is not None and last_body_height_ratio is not None:
-                    angular_error = 0.5 - last_person_cx
-                    linear_error = TARGET_HEIGHT_RATIO - last_body_height_ratio
+                    # 1. 방위각(Bearing Angle) 계산 (라디안 단위)
+                    # C920 화각 약 70도 기준, cx가 0.5일 때 0도. 왼쪽은 +, 오른쪽은 -
+                    bearing_angle_rad = (0.5 - last_person_cx) * math.radians(70.0)
                     
-                    # 속도를 낮추고 게인값을 줄여 바퀴 슬립과 급회전을 방지합니다.
-                    raw_linear = linear_error * 0.6
-                    virtual_linear = max(-0.05, min(0.08, raw_linear)) 
-                    
-                    raw_angular = angular_error * 0.8
-                    virtual_angular_target = max(-0.2, min(0.2, raw_angular))
-                    
-                    if abs(linear_error) < 0.03:
-                        virtual_linear = 0.0
-                    if abs(angular_error) < 0.04:
-                        virtual_angular_target = 0.0
+                    # 2. 센서 융합(Sensor Fusion): 카메라 방위각 + 2D 라이다 거리
+                    lidar_distance = None
+                    if node.latest_scan is not None:
+                        angle_deg = math.degrees(bearing_angle_rad)
+                        # -180 ~ 180도 각도를 0 ~ 360도 인덱스로 변환
+                        angle_idx = int(round(angle_deg)) % 360
+                        
+                        # 방위각 기준 +-15도 범위 내의 유효 범위 값 추출
+                        valid_ranges = []
+                        for offset in range(-15, 16):
+                            idx = (angle_idx + offset) % 360
+                            if idx < len(node.latest_scan.ranges):
+                                r = node.latest_scan.ranges[idx]
+                                if node.latest_scan.range_min < r < node.latest_scan.range_max and not math.isnan(r) and not math.isinf(r):
+                                    valid_ranges.append(r)
+                                    
+                        if len(valid_ranges) > 0:
+                            lidar_distance = min(valid_ranges) # 가장 가까운 다리까지의 거리
 
-                    virtual_angular = 0.4 * virtual_angular_target + 0.6 * prev_virtual_angular
-                    prev_virtual_angular = virtual_angular
+                    # 3. 오차(Error) 정의 및 제어 모드 선택
+                    TARGET_DISTANCE = 0.8  # 목표 유지 거리: 0.8m
+                    
+                    if lidar_distance is not None:
+                        distance_mode = "LiDAR (Fusion)"
+                        linear_error = lidar_distance - TARGET_DISTANCE
+                    else:
+                        distance_mode = "Camera (Fallback)"
+                        # 기존 방식: 박스 크기 비율 기반 오차 산출 (대략적으로 크기 비율 매칭)
+                        # 오차 크기를 유사하게 맞추기 위해 1.5배의 스케일 가중치 적용
+                        linear_error = (TARGET_HEIGHT_RATIO - last_body_height_ratio) * 1.5
+                    
+                    # 4. 데드밴드(Deadband) 처리로 미세 진동 방지
+                    # 선속도 오차가 4cm 미만이면 0으로 처리
+                    if abs(linear_error) < 0.04:
+                        linear_error = 0.0
+                    # 각속도 오차가 3도 미만이면 0으로 처리
+                    if abs(bearing_angle_rad) < math.radians(3.0):
+                        bearing_angle_rad = 0.0
 
-                    scale_factor = max(0.3, 1.0 - abs(angular_error) * 1.5)
+                    # 5. PID 제어 출력을 업데이트하여 최종 속도 도출
+                    virtual_linear = node.linear_pid.update(linear_error)
+                    virtual_angular = node.angular_pid.update(bearing_angle_rad)
+
+                    # 회전 오차가 클 때는 안전을 위해 선속도를 감속시킴 (scale_factor)
+                    scale_factor = max(0.3, 1.0 - abs(bearing_angle_rad) * 1.2)
                     virtual_linear *= scale_factor
 
                     # 속도 명령 전송
                     node.send_velocity(virtual_linear, virtual_angular)
                     
-                    # 오버레이 정보
-                    cv2.putText(display_frame, f"Person Center X: {last_person_cx:.2f}", (20, 80),
+                    # 오버레이 정보 그리기
+                    cv2.putText(display_frame, f"Bearing Angle: {math.degrees(bearing_angle_rad):.1f} deg", (20, 80),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                    cv2.putText(display_frame, f"Ang Error: {angular_error:.2f} (Speed: {virtual_angular:.2f})", (20, 110),
+                    cv2.putText(display_frame, f"Dist Mode: {distance_mode}", (20, 110),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.putText(display_frame, f"Body Height (S-H): {last_body_height_ratio:.2f}", (20, 140),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                    cv2.putText(display_frame, f"Lin Error: {linear_error:.2f} (Speed: {virtual_linear:.2f})", (20, 170),
+                    if lidar_distance is not None:
+                        cv2.putText(display_frame, f"LiDAR Dist: {lidar_distance:.2f} m (Err: {linear_error:.2f}m)", (20, 140),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                    else:
+                        cv2.putText(display_frame, f"Cam Height Ratio: {last_body_height_ratio:.2f} (Err: {linear_error:.2f})", (20, 140),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                    cv2.putText(display_frame, f"Speed -> Lin: {virtual_linear:.3f}, Ang: {virtual_angular:.3f}", (20, 170),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
                     cv2.circle(display_frame, (int(last_person_cx * w_img), int(last_person_cy * h_img)), 8, (0, 255, 0), -1)
@@ -605,7 +714,7 @@ def main():
                                           (int(bx1 * w_img), int(by1 * h_img)), 
                                           (int(bx2 * w_img), int(by2 * h_img)), 
                                           (0, 255, 0), 2)
-                            cv2.putText(display_frame, "Person", 
+                            cv2.putText(display_frame, f"Locked Target (ID: {target_track_id})", 
                                         (int(bx1 * w_img), int(by1 * h_img) - 10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
@@ -623,11 +732,11 @@ def main():
                             for pt in [pt_l_shoulder, pt_r_shoulder, pt_l_hip, pt_r_hip]:
                                 cv2.circle(display_frame, pt, 5, (0, 0, 255), -1)
                 else:
-                    prev_virtual_angular = 0.0
                     node.send_stop()
+                    node.reset_pids()
 
                 if person_detected:
-                    cv2.putText(display_frame, "STATUS: TRACKING ACTIVE", (20, 40),
+                    cv2.putText(display_frame, f"STATUS: TRACKING ACTIVE (ID: {target_track_id})", (20, 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 else:
                     cv2.putText(display_frame, "STATUS: STOP & SEARCHING", (20, 40),
