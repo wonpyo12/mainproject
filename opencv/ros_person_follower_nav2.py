@@ -413,15 +413,12 @@ def main():
     shared_last_person_cy = None
     shared_last_body_height_ratio = None
     shared_last_pose_landmarks = None
-    shared_trigger_lock_on = False
-    shared_is_target_registered = False
     shared_inference_time_ms = 0.0
     
     # YOLOv8-Pose 실행을 위한 백그라운드 스레드 함수
     def yolo_inference_thread():
         nonlocal latest_frame, new_frame_ready, shared_person_detected, shared_last_person_cx, shared_last_person_cy
         nonlocal shared_last_body_height_ratio, shared_last_pose_landmarks, shared_inference_time_ms
-        nonlocal shared_trigger_lock_on, shared_is_target_registered
         
         # YOLOv8 Nano Pose 모델 로드
         model = YOLO('yolov8n-pose.pt')
@@ -444,9 +441,6 @@ def main():
             # FOLLOW 모드일 때만 욜로 연산 수행 (자원 절약 및 중복 동작 방지)
             if img_to_process is not None and node.state == "FOLLOW":
                 try:
-                    # 스페이스바 잠금 요청 선언
-                    lock_on_requested = False
-                            
                     tm_local.reset()
                     tm_local.start()
                     results = model(img_to_process, conf=0.15, verbose=False)
@@ -514,14 +508,7 @@ def main():
                                 cand['hist'] = get_upper_body_hist(img_to_process, cand['annotated'][1])
                             else:
                                 cand['hist'] = None
-                        # 사람이 1명 이상 검출된 프레임에서만 스페이스바 잠금 요청 감시 및 소비
-                        with frame_lock:
-                            if shared_trigger_lock_on:
-                                lock_on_requested = True
-                                shared_trigger_lock_on = False
-
-                        # 1. 사용자가 스페이스바를 누른 경우 강제 락온 설정
-                        if lock_on_requested:
+                        if tracked_cx is None or tracked_color_hist is None:
                             best_idx = -1
                             min_dist_to_center = 999.0
                             for idx, cand in enumerate(valid_candidates):
@@ -533,38 +520,6 @@ def main():
                                 target_candidate = valid_candidates[best_idx]
                                 if target_candidate['hist'] is not None:
                                     tracked_color_hist = target_candidate['hist']
-                                    print("★★ [Tracker] 주인 등록 완료! (스페이스바 수동 잠금) ★★")
-                                else:
-                                    tracked_color_hist = None
-                                    print("⚠️ [Tracker] 주인 등록 시 상의 색상 추출에 실패했습니다. (거리 기준만 적용)")
-                        
-                        # 2. 락온된 주인을 잃어버렸거나 아직 등록 전인 경우
-                        elif tracked_cx is None or tracked_color_hist is None:
-                            if tracked_color_hist is not None:
-                                # 저장된 색상 정보를 기반으로 후보군 중 유사도가 높은 대상을 탐색 (Re-ID)
-                                best_reid_idx = -1
-                                max_color_sim = -999.0
-                                for idx, cand in enumerate(valid_candidates):
-                                    if cand['hist'] is not None:
-                                        sim = cv2.compareHist(cand['hist'], tracked_color_hist, cv2.HISTCMP_CORREL)
-                                        if sim > max_color_sim:
-                                            max_color_sim = sim
-                                            best_reid_idx = idx
-                                            
-                                # 색상 유사도가 0.80 이상인 경우 주인으로 재판단하여 락온 재개
-                                if best_reid_idx != -1 and max_color_sim > 0.80:
-                                    target_candidate = valid_candidates[best_reid_idx]
-                                    if target_candidate['hist'] is not None:
-                                        # 색상 프로필 학습 누적
-                                        tracked_color_hist = 0.9 * tracked_color_hist + 0.1 * target_candidate['hist']
-                                        cv2.normalize(tracked_color_hist, tracked_color_hist, 0, 1, cv2.NORM_MINMAX)
-                                    print(f"★★ [Re-ID] 주인을 재식별하여 다시 추적을 시작합니다! (유사도: {max_color_sim:.2f}) ★★")
-                            else:
-                                # 색상 정보가 완전히 없는 최초 등록 대기 상태: 
-                                # 사용자가 스페이스바를 눌러 등록하기 전까지는 추종을 시작하지 않음
-                                pass
-                        
-                        # 3. 락온되어 정상 추적 중인 경우 (Centroid + Color Hybrid Tracking)
                         else:
                             best_idx = -1
                             max_score = -999.0
@@ -603,9 +558,9 @@ def main():
                     if not detected:
                         yolo_lost_count += 1
                         if yolo_lost_count >= 30:
-                            # 1초 이상 놓치면 좌표 락온은 끊지만, 색상 정보(tracked_color_hist)는 보존!
                             tracked_cx = None
                             tracked_cy = None
+                            tracked_color_hist = None
                     
                     with frame_lock:
                         shared_person_detected = detected
@@ -613,7 +568,6 @@ def main():
                         shared_last_person_cy = final_cy
                         shared_last_body_height_ratio = final_body_height
                         shared_last_pose_landmarks = final_annotated
-                        shared_is_target_registered = (tracked_color_hist is not None)
                         shared_inference_time_ms = tm_local.getTimeMilli()
                         
                 except Exception as e:
@@ -662,7 +616,6 @@ def main():
                     last_person_cy = shared_last_person_cy
                     last_body_height_ratio = shared_last_body_height_ratio
                     annotated_frame = shared_last_pose_landmarks
-                    is_target_registered = shared_is_target_registered
                     inference_time_ms = shared_inference_time_ms
 
                 if person_detected and last_person_cx is not None and last_person_cy is not None and last_body_height_ratio is not None:
@@ -759,7 +712,7 @@ def main():
                                           (int(bx1 * w_img), int(by1 * h_img)), 
                                           (int(bx2 * w_img), int(by2 * h_img)), 
                                           (0, 255, 0), 2)
-                            cv2.putText(display_frame, "Registered Target" if is_target_registered else "Candidate Person", 
+                            cv2.putText(display_frame, "Target Person", 
                                         (int(bx1 * w_img), int(by1 * h_img) - 10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
@@ -784,12 +737,8 @@ def main():
                     cv2.putText(display_frame, "STATUS: TRACKING ACTIVE", (20, 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 else:
-                    if not is_target_registered:
-                        cv2.putText(display_frame, "STATUS: WAIT FOR TARGET (Press SPACE)", (20, 40),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                    else:
-                        cv2.putText(display_frame, "STATUS: TARGET LOST (Searching)", (20, 40),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(display_frame, "STATUS: TARGET LOST (Searching)", (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
                 cv2.putText(display_frame, f"Inference: {inference_time_ms:.1f} ms", (w_img - 220, h_img - 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 255, 100), 2)
@@ -817,9 +766,6 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
-            elif key == 32:  # 스페이스바 아스키코드 32
-                with frame_lock:
-                    shared_trigger_lock_on = True
     except KeyboardInterrupt:
         print("\n키보드 인터럽트로 종료합니다.")
     except Exception as e:
