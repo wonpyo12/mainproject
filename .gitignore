@@ -56,8 +56,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Troubleshooting screenshots
-docs/troubleshooting/images/
+# Documentation directory
+docs/
 
 # Python bytecode
 __pycache__/
