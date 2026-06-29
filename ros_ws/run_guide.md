@@ -107,3 +107,9 @@ source ~/.bashrc
   `ros2 lifecycle get /amcl` (정상 시 `active [3]` 출력)
 * **오도메트리 좌표 연결 상태 확인 (로봇 $\rightarrow$ 바디)**:
   `ros2 run tf2_ros tf2_echo odom base_footprint`
+
+## 4. 실행순서
+1. 라즈베리파이에 pi_camera_streamer.py 실행(mainproject/opencv에 위치)
+2. 라즈베리에서 robot.launch 파일 실행
+3. 가상머신에서 ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/mnt/hgfs/mainproject/ros_ws/classroom_v3.yaml use_sim_time:=false (rviz 맵가지고오는 것)
+4. 가상머신에서 mainproject/opencv/ros_person_follower_nav2.py 실행(사람추종 및 원점복귀하는 것)
