@@ -7,7 +7,7 @@
 ## 0. 사전 설정 (최초 1회만 수행)
 양측 기기 간 멀티캐스트 및 통신 안정성을 위해 **CycloneDDS** 환경변수를 각 기기의 터미널 설정 파일(`.bashrc`)에 등록해야 합니다.
 
-### ① 가상머신(PC) 설정
+### ① 가상머신(PC) 설정(무조건 하세요)
 가상머신 터미널을 열고 아래 명령어를 순서대로 실행합니다:
 ```bash
 echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
