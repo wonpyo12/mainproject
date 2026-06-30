@@ -5,26 +5,29 @@
 ---
 
 ## 0. 사전 설정 (최초 1회만 수행)
-양측 기기 간 멀티캐스트 및 통신 안정성을 위해 **CycloneDDS** 환경변수를 각 기기의 터미널 설정 파일(`.bashrc`)에 등록해야 합니다.
 
-### ① 가상머신(PC) 설정(무조건 하세요)
-가상머신 터미널을 열고 아래 명령어를 순서대로 실행합니다:
+> ⚠️ **중요 (2026-06-30 정정, 이슈 #26):** 예전 가이드는 CycloneDDS 설치/설정을 시켰으나 **이는 금지**입니다.
+> - 학원/Test WiFi가 멀티캐스트를 차단하는 건 사실이지만, **ROS2 기본 Fast DDS가 unicast로 자동 우회**하므로 별도 설정이 필요 없습니다 (talker/listener 교차 테스트로 검증 완료).
+> - `ros-humble-rmw-cyclonedds-cpp`를 깔면 iceoryx 패키지가 딸려와 **라즈베리파이(ARM64)에서 `turtlebot3_ros`(bringup)를 segfault로 죽입니다.**
+> - 따라서 **CycloneDDS 관련 환경변수(`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`, `CYCLONEDDS_URI`)와 패키지를 모두 제거하고 기본 Fast DDS로 두세요.**
+
+### ① 가상머신(PC) — 모델 변수만 등록
 ```bash
-echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
 echo "export TURTLEBOT3_MODEL=burger" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### ② 라즈베리 파이(로봇 본체) 설정
-라즈베리 파이 터미널을 열고 아래 명령어를 순서대로 실행합니다 (CycloneDDS 미설치 시 설치 병행):
+### ② 라즈베리 파이(로봇 본체)
+별도 DDS 설정 불필요. 만약 과거에 CycloneDDS를 깔았다면 아래로 제거(segfault 방지):
 ```bash
-# CycloneDDS 통신 라이브러리 설치
-sudo apt update
-sudo apt install ros-humble-rmw-cyclonedds-cpp
-
-# 환경변수 등록(이건 했음)
-echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+# .bashrc에서 cyclonedds 줄 제거
+sed -i '/RMW_IMPLEMENTATION=rmw_cyclonedds_cpp/d; /CYCLONEDDS_URI/d' ~/.bashrc
 source ~/.bashrc
+
+# 패키지 purge (iceoryx 동반 제거)
+sudo apt purge -y ros-humble-rmw-cyclonedds-cpp ros-humble-cyclonedds \
+                  ros-humble-iceoryx-binding-c ros-humble-iceoryx-hoofs ros-humble-iceoryx-posh
+sudo apt autoremove -y
 ```
 
 ---
@@ -54,7 +57,7 @@ source ~/.bashrc
 * **터미널 1 (Nav2 네비게이션 스택 실행)**:
   * 맵 파일 위치를 지정하며, 실기를 사용하므로 **`use_sim_time:=false`**를 꼭 붙여줍니다.
   ```bash
-  ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/mnt/hgfs/mainproject/ros_ws/classroom_v3.yaml use_sim_time:=false
+  ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/OpenCV_kw/ros_ws/classroom_v3.yaml use_sim_time:=false
   ```
 * **터미널 2 (RViz 시각화 툴 구동)**:
   ```bash
@@ -72,7 +75,7 @@ source ~/.bashrc
 ### [Step 3] 가상머신(PC) 사람 추종 및 복귀 노드 가동
 * **터미널 3 (하이브리드 제어 파이썬 스크립트 실행)**:
   ```bash
-  python3 /mnt/hgfs/mainproject/opencv/ros_person_follower_nav2.py
+  python3 /home/seohee/mainproject/OpenCV_kw/opencv/ros_person_follower_nav2.py
   ```
 
 ---
@@ -109,7 +112,7 @@ source ~/.bashrc
   `ros2 run tf2_ros tf2_echo odom base_footprint`
 
 ## 4. 실행순서
-1. 라즈베리파이에 pi_camera_streamer.py 실행(mainproject/opencv에 위치)
-2. 라즈베리에서 robot.launch 파일 실행
-3. 가상머신에서 ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/mnt/hgfs/mainproject/ros_ws/classroom_v3.yaml use_sim_time:=false (rviz 맵가지고오는 것)
-4. 가상머신에서 mainproject/opencv/ros_person_follower_nav2.py 실행(사람추종 및 원점복귀하는 것)
+1. 라즈베리파이에서 robot.launch 파일 실행 (모터/라이다 구동)
+2. 라즈베리파이에서 pi_camera_streamer.py 실행 (라즈베리파이 자체 경로, 예: ~/ros_ws/pi_camera_streamer.py — 원본은 OpenCV_kw/ros_ws/pi_camera_streamer.py)
+3. 가상머신에서 ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/OpenCV_kw/ros_ws/classroom_v3.yaml use_sim_time:=false (rviz 맵 가져오는 것)
+4. 가상머신에서 /home/seohee/mainproject/OpenCV_kw/opencv/ros_person_follower_nav2.py 실행 (사람 추종 및 원점 복귀)
