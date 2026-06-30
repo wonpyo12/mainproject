@@ -105,7 +105,7 @@ ros2_run() {
     source /opt/ros/humble/setup.bash
     export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-42}"
 
-    FASTDDS_XML="$ROBO_DIR/../../ros_ws/fastdds_vmware.xml"
+    FASTDDS_XML="$ROBO_DIR/../../ros_ws/v1/fastdds_vmware.xml"
     if [ "${USE_FASTDDS_UNICAST:-0}" = "1" ]; then
         export FASTRTPS_DEFAULT_PROFILES_FILE="$(realpath "$FASTDDS_XML" 2>/dev/null || echo "$FASTDDS_XML")"
         echo "[DDS] 유니캐스트 프로파일 사용: $FASTRTPS_DEFAULT_PROFILES_FILE"

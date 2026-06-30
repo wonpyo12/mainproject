@@ -57,7 +57,7 @@ sudo apt autoremove -y
 * **터미널 1 (Nav2 네비게이션 스택 실행)**:
   * 맵 파일 위치를 지정하며, 실기를 사용하므로 **`use_sim_time:=false`**를 꼭 붙여줍니다.
   ```bash
-  ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/OpenCV_kw/ros_ws/classroom_v3.yaml use_sim_time:=false
+  ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/ros_ws/v2/classroom_v3.yaml use_sim_time:=false
   ```
 * **터미널 2 (RViz 시각화 툴 구동)**:
   ```bash
@@ -75,7 +75,7 @@ sudo apt autoremove -y
 ### [Step 3] 가상머신(PC) 사람 추종 및 복귀 노드 가동
 * **터미널 3 (하이브리드 제어 파이썬 스크립트 실행)**:
   ```bash
-  python3 /home/seohee/mainproject/OpenCV_kw/opencv/ros_person_follower_nav2.py
+  python3 /home/seohee/mainproject/OpenCV_2/v2/ros_person_follower_nav2.py
   ```
 
 ---
@@ -113,6 +113,6 @@ sudo apt autoremove -y
 
 ## 4. 실행순서
 1. 라즈베리파이에서 robot.launch 파일 실행 (모터/라이다 구동)
-2. 라즈베리파이에서 pi_camera_streamer.py 실행 (라즈베리파이 자체 경로, 예: ~/ros_ws/pi_camera_streamer.py — 원본은 OpenCV_kw/ros_ws/pi_camera_streamer.py)
-3. 가상머신에서 ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/OpenCV_kw/ros_ws/classroom_v3.yaml use_sim_time:=false (rviz 맵 가져오는 것)
-4. 가상머신에서 /home/seohee/mainproject/OpenCV_kw/opencv/ros_person_follower_nav2.py 실행 (사람 추종 및 원점 복귀)
+2. 라즈베리파이에서 pi_camera_streamer.py 실행 (라즈베리파이 자체 경로, 예: ~/ros_ws/pi_camera_streamer.py — 원본은 mainproject/ros_ws/v2/pi_camera_streamer.py)
+3. 가상머신에서 ros2 launch turtlebot3_navigation2 navigation2.launch.py map:=/home/seohee/mainproject/ros_ws/v2/classroom_v3.yaml use_sim_time:=false (rviz 맵 가져오는 것)
+4. 가상머신에서 /home/seohee/mainproject/OpenCV_2/v2/ros_person_follower_nav2.py 실행 (사람 추종 및 원점 복귀)
