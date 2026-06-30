@@ -24,4 +24,18 @@ interface ApiService {
         @Header("Authorization") authHeader: String,
         @Body request: CompleteOrderRequest,
     ): CompleteOrderResponse
+
+    // [로봇] 정지 — 그 자리 래치 정지(HALT)
+    @POST("api/robot/stop")
+    suspend fun stopRobot(
+        @Header("Authorization") authHeader: String,
+        @Body request: RobotCommandRequest,
+    ): ApiResponse
+
+    // [로봇] 추종 재개 — 정지 해제(RESUME)
+    @POST("api/robot/resume")
+    suspend fun resumeRobot(
+        @Header("Authorization") authHeader: String,
+        @Body request: RobotCommandRequest,
+    ): ApiResponse
 }

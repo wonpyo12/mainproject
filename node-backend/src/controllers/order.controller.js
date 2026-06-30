@@ -9,6 +9,7 @@
 // ===================================================================
 const pool  = require('../config/db');    // [MySQL]
 const redis = require('../config/redis'); // [Redis]
+const { sendRobotCommand } = require('../utils/robotBridge'); // [로봇] TCP 명령 브릿지
 
 // ───────────────────────────────────────────────
 // POST /api/orders/complete  (JWT 필요)
@@ -164,11 +165,14 @@ const getOrderHistory = async (req, res) => {
   }
 };
 
-// ROS2 로봇 복귀 명령 전송
-// 실제 환경: MQTT publish / HTTP to ROS2 bridge / rosbridge websocket
+// 로봇 SLAM 복귀 명령 전송
+//   백엔드 ──TCP(9998)──→ 라파 cmd_server "RETURN"
+//   → /robocart/return=RETURN_HOME 발행 + 추종 정지(nav2 가 /cmd_vel 제어)
+// 결제(트랜잭션·웹소켓)는 이미 끝난 뒤이므로, 전송 실패해도 결제는 성공 처리하고 로그만 남긴다.
 function sendRobotReturnCommand(robotSerialNumber) {
-  console.log(`[ROS2] ${robotSerialNumber} → 초기위치 복귀 명령 전송 (nav2 goal: home_pose)`);
-  // 예시: mqttClient.publish(`robot/${robotSerialNumber}/cmd`, JSON.stringify({ action: 'RETURN_HOME' }));
+  sendRobotCommand('RETURN')
+    .then(() => console.log(`[Robot] ${robotSerialNumber} → SLAM 복귀(RETURN_HOME) 신호 전송`))
+    .catch((err) => console.error(`[Robot] ${robotSerialNumber} 복귀 신호 전송 실패:`, err.message));
 }
 
 // Redis HSET 평탄화 → 상품 배열

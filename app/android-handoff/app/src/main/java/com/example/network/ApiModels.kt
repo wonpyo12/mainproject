@@ -20,6 +20,11 @@ data class CompleteOrderRequest(
     @SerializedName("robotSerialNumber") val robotSerialNumber: String,
 )
 
+// 로봇 정지(HALT) / 추종 재개(RESUME) 명령
+data class RobotCommandRequest(
+    @SerializedName("robotSerialNumber") val robotSerialNumber: String,
+)
+
 // ── 응답 ──────────────────────────────────────────────────────
 data class ApiResponse(
     val success: Boolean,

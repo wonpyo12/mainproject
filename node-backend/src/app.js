@@ -7,6 +7,7 @@ const hardwareRoutes = require('./routes/hardware.routes');
 const orderRoutes    = require('./routes/order.routes');
 const productRoutes  = require('./routes/product.routes');
 const memberRoutes   = require('./routes/member.routes');
+const robotRoutes    = require('./routes/robot.routes');
 
 
 const app = express();
@@ -21,6 +22,7 @@ app.use('/api/hardware', hardwareRoutes); // QR 스캔 매칭 / RFID 상품 인�
 app.use('/api/orders',   orderRoutes);    // 결제 완료 / 주문 이력
 app.use('/api/products', productRoutes);  // 상품 CRUD + RFID 스캔 수신
 app.use('/api/members',  memberRoutes);   // 회원 조회 · 수정 · 삭제
+app.use('/api/robot',    robotRoutes);    // 로봇 정지(HALT) / 추종 재개(RESUME)
 
 // 헬스 체크
 app.get('/health', (req, res) =>

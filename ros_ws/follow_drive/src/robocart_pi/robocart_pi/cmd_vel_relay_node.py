@@ -16,6 +16,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
+from std_msgs.msg import String
 
 
 class CmdVelRelayNode(Node):
@@ -37,8 +38,13 @@ class CmdVelRelayNode(Node):
         self.last_cmd = Twist()
         self.last_stamp = self.get_clock().now()
 
+        # SLAM 복귀 모드 — True 면 /cmd_vel 발행을 멈추고 nav2 에 양보한다.
+        # (복귀=세션 종료이므로 프로세스 재시작 전까지 유지)
+        self.yield_to_nav = False
+
         self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_subscription(Twist, '/robocart/cmd_vel', self.on_cmd, 10)
+        self.create_subscription(String, '/robocart/return', self.on_return, 10)
         self.timer = self.create_timer(1.0 / self.RATE, self.tick)
         self._stopped_logged = False
         self.get_logger().info(
@@ -54,7 +60,16 @@ class CmdVelRelayNode(Node):
         self.last_stamp = self.get_clock().now()
         self._stopped_logged = False
 
+    def on_return(self, msg: String):
+        # SLAM 복귀 신호 — 추종 중계를 멈추고 nav2 가 /cmd_vel 을 단독 제어하게 한다.
+        if msg.data.strip().upper() == 'RETURN_HOME' and not self.yield_to_nav:
+            self.yield_to_nav = True
+            self.get_logger().info('RETURN_HOME 수신 — /cmd_vel 중계 중단, nav2 에 양보')
+
     def tick(self):
+        if self.yield_to_nav:
+            # nav2 가 /cmd_vel 을 제어하는 동안 중계기는 침묵 (충돌 방지)
+            return
         age = (self.get_clock().now() - self.last_stamp).nanoseconds * 1e-9
         out = Twist()
         if age <= self.timeout:
