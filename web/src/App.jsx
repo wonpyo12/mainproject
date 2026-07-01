@@ -7,7 +7,9 @@ import { InventoryView } from './views/InventoryView';
 import { AlertsView } from './views/AlertsView';
 import { EmptyView } from './views/EmptyView';
 import { MembersView } from './views/MembersView';
+import { InquiriesView } from './views/InquiriesView';
 import { CameraView } from './views/CameraView';
+import { MapView } from './views/MapView';
 import { fetchMockData } from './api';
 import { io } from 'socket.io-client';
 
@@ -25,6 +27,7 @@ const NAV = [
 const NAV2 = [
   { id: 'map', ko: '매장 지도', en: 'Zones', icon: 'map' },
   { id: 'members', ko: '회원', en: 'Members', icon: 'users' },
+  { id: 'inquiries', ko: '문의', en: 'Inquiries', icon: 'message-square' },
   { id: 'settings', ko: '설정', en: 'Settings', icon: 'settings' },
 ];
 
@@ -36,6 +39,7 @@ const TITLES = {
   alerts: ['알림', '도난 방지 · 배터리 · 추적 이벤트'],
   map: ['매장 지도', 'SLAM 맵 · 운영 구역'],
   members: ['회원', 'QR 인증 사용자'],
+  inquiries: ['문의', '앱에서 접수된 고객 문의'],
   settings: ['설정', '시스템 환경설정'],
 };
 
@@ -269,6 +273,10 @@ export default function App() {
     body = <AlertsView alerts={alerts} onDismiss={handleDismissAlert} />;
   } else if (currentView === 'members') {
     body = <MembersView />;
+  } else if (currentView === 'inquiries') {
+    body = <InquiriesView />;
+  } else if (currentView === 'map') {
+    body = <MapView />;
   } else {
     body = <EmptyView title={tk} />;
   }
