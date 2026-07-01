@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CartMe · 온보딩</title>
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<style>
+  :root{
+    --blue:#2b6ef0;
+    --blue-d:#1b54c9;
+    --blue-soft:#eaf1ff;
+    --ink:#16223a;
+    --muted:#7d899e;
+    --line:#eef1f6;
+    --ok:#1fbf75;
+    --shadow:0 18px 40px rgba(43,110,240,.16);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:'Pretendard',-apple-system,system-ui,sans-serif;
+    background:
+      radial-gradient(900px 500px at 20% 0%, #eef4ff 0%, transparent 60%),
+      radial-gradient(700px 500px at 100% 100%, #f3f7ff 0%, transparent 55%),
+      #e9edf5;
+    min-height:100%;
+    display:flex; align-items:center; justify-content:center;
+    padding:32px 16px;
+    color:var(--ink);
+  }
+
+  /* ===== Phone frame ===== */
+  .phone{
+    position:relative;
+    width:390px; height:844px;
+    background:#fff;
+    border-radius:54px;
+    box-shadow:0 40px 90px rgba(20,34,58,.28), 0 0 0 12px #0e1320, 0 0 0 13px #2a3346;
+    overflow:hidden;
+  }
+  .notch{
+    position:absolute; top:11px; left:50%; transform:translateX(-50%);
+    width:128px; height:30px; background:#0e1320; border-radius:18px; z-index:60;
+  }
+
+  /* ===== Status bar ===== */
+  .statusbar{
+    position:absolute; top:0; left:0; right:0; height:54px; z-index:55;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 30px 0;
+    font-weight:600; font-size:15px; color:var(--ink);
+    pointer-events:none;
+  }
+  .statusbar .icons{display:flex; align-items:center; gap:6px;}
+  .statusbar svg{display:block;}
+
+  /* ===== Skip ===== */
+  .skip{
+    position:absolute; top:60px; right:20px; z-index:50;
+    border:none; background:transparent; cursor:pointer;
+    font-family:inherit; font-size:14px; font-weight:600; color:var(--muted);
+    padding:8px 10px; border-radius:12px; transition:.2s;
+  }
+  .skip:hover{color:var(--ink); background:#f3f5f9;}
+
+  /* ===== Scroll driver ===== */
+  .scroll{
+    position:absolute; inset:0;
+    overflow-y:scroll; overflow-x:hidden;
+    scroll-snap-type:y mandatory;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .scroll::-webkit-scrollbar{display:none;}
+  .sentinel{height:100%; scroll-snap-align:start; scroll-snap-stop:always;}
+
+  /* ===== Stage (sticky visuals) ===== */
+  .stage{
+    position:absolute; inset:0; z-index:20;
+    pointer-events:none;
+    padding-top:104px;
+  }
+  .slide{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center;
+    padding:104px 30px 190px;
+    opacity:0; transform:translateY(26px) scale(.985);
+    transition:opacity .35s ease, transform .35s ease;
+    will-change:opacity, transform;
+  }
+  .slide.on{opacity:1; transform:none;}
+
+  .art{
+    position:relative; width:280px; height:300px;
+    display:flex; align-items:center; justify-content:center;
+    margin-top:6px;
+  }
+  .titles{margin-top:26px; text-align:center; max-width:300px;}
+  .titles h2{font-size:23px; font-weight:800; letter-spacing:-.4px; line-height:1.35;}
+  .titles p{margin-top:12px; font-size:14.5px; line-height:1.65; color:var(--muted); font-weight:500;}
+
+  /* ===== Mascot ===== */
+  .mascot{position:absolute; bottom:-6px; width:120px; filter:drop-shadow(0 12px 14px rgba(43,110,240,.22));}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  .slide.on .mascot{animation:bob 2.6s ease-in-out infinite;}
+
+  /* ---------- Step 1: QR scan ---------- */
+  .qrbox{
+    position:relative; width:176px; height:176px; border-radius:26px;
+    background:#fff; box-shadow:var(--shadow); overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .qrbox .corner{position:absolute; width:30px; height:30px; border:4px solid var(--blue); border-radius:6px;}
+  .qrbox .corner.tl{top:14px; left:14px; border-right:none; border-bottom:none;}
+  .qrbox .corner.tr{top:14px; right:14px; border-left:none; border-bottom:none;}
+  .qrbox .corner.bl{bottom:14px; left:14px; border-right:none; border-top:none;}
+  .qrbox .corner.br{bottom:14px; right:14px; border-left:none; border-top:none;}
+  .qrimg{width:108px; height:108px; opacity:.9;}
+  .scanline{
+    position:absolute; left:12px; right:12px; height:3px; top:18px;
+    background:linear-gradient(90deg,transparent,var(--blue),transparent);
+    box-shadow:0 0 16px 4px rgba(43,110,240,.6);
+    border-radius:4px; opacity:0;
+  }
+  .slide1.on .scanline{animation:scan 2.2s ease-in-out infinite; opacity:1;}
+  @keyframes scan{0%{top:18px}50%{top:150px}100%{top:18px}}
+  .popcheck{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    opacity:0; transform:scale(.4);
+  }
+  .popcheck .badge{
+    width:74px; height:74px; border-radius:50%; background:var(--ok);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 10px 24px rgba(31,191,117,.5);
+  }
+  .slide1.fire .scanline{animation:none; opacity:0;}
+  .slide1.fire .popcheck{animation:pop .5s cubic-bezier(.2,1.5,.4,1) forwards;}
+  @keyframes pop{0%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
+
+  /* ---------- Step 2: recognition ---------- */
+  .ringwrap{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;}
+  .ring{position:absolute; width:90px; height:90px; border-radius:50%; border:2.5px solid var(--blue); opacity:0;}
+  .slide2.on .ring{animation:pulse 2.6s ease-out infinite;}
+  .slide2.on .ring.r2{animation-delay:.8s;}
+  .slide2.on .ring.r3{animation-delay:1.6s;}
+  @keyframes pulse{0%{transform:scale(.5);opacity:.85}100%{transform:scale(2.4);opacity:0}}
+  .pathsvg{position:absolute; inset:0; width:100%; height:100%;}
+  .pathline{
+    fill:none; stroke:var(--blue); stroke-width:3; stroke-linecap:round;
+    stroke-dasharray:6 9; stroke-dashoffset:260;
+  }
+  .slide2.on .pathline{animation:draw 2.4s ease forwards;}
+  @keyframes draw{to{stroke-dashoffset:0;}}
+  .chip{
+    position:absolute; top:6px; left:50%; transform:translate(-50%,-8px);
+    background:var(--blue); color:#fff; font-size:12.5px; font-weight:700;
+    padding:8px 14px; border-radius:999px; white-space:nowrap;
+    box-shadow:0 8px 20px rgba(43,110,240,.4);
+    display:flex; align-items:center; gap:6px;
+    opacity:0;
+  }
+  .slide2.fire .chip{animation:chipin .5s ease .3s forwards;}
+  @keyframes chipin{to{opacity:1; transform:translate(-50%,0);}}
+
+  /* ---------- Step 3: payment ---------- */
+  .pay{position:relative; width:100%; height:100%;}
+  .card{
+    position:absolute; top:8px; left:50%;
+    width:210px; height:128px; border-radius:18px;
+    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    color:#fff; padding:16px 18px; box-shadow:0 16px 30px rgba(27,84,201,.4);
+    transform:translate(140%,0) rotate(8deg); opacity:0;
+  }
+  .slide3.on .card{animation:cardin .7s cubic-bezier(.2,.8,.25,1) .2s forwards;}
+  @keyframes cardin{to{transform:translate(-50%,0) rotate(-3deg); opacity:1;}}
+  .card .brand{font-size:12px; font-weight:600; opacity:.85;}
+  .card .amt{font-size:26px; font-weight:800; margin-top:18px; letter-spacing:-.5px;}
+  .card .sub{font-size:11.5px; opacity:.8; margin-top:4px;}
+  .card .chipgold{position:absolute; top:54px; left:18px; width:30px; height:22px; border-radius:5px;
+    background:linear-gradient(135deg,#ffe39a,#d9a93f);}
+  .paycheck{
+    position:absolute; top:58px; left:50%; transform:translateX(-50%) scale(.3);
+    width:50px; height:50px; border-radius:50%; background:var(--ok);
+    display:flex; align-items:center; justify-content:center; opacity:0; z-index:3;
+    box-shadow:0 8px 20px rgba(31,191,117,.5);
+  }
+  .slide3.fire .paycheck{animation:pop .5s cubic-bezier(.2,1.5,.4,1) .15s forwards;}
+  .returnbtn{
+    position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+    background:var(--blue); color:#fff; font-weight:700; font-size:14px;
+    padding:12px 26px; border-radius:14px; border:none;
+    display:flex; align-items:center; gap:8px;
+  }
+  .slide3.fire .returnbtn{animation:glow 1.4s ease-in-out .4s infinite;}
+  @keyframes glow{
+    0%,100%{box-shadow:0 0 0 0 rgba(43,110,240,.45);}
+    50%{box-shadow:0 0 0 14px rgba(43,110,240,0);}
+  }
+  .rollcart{
+    position:absolute; bottom:18px; left:50%; width:64px;
+    transform:translateX(40px);
+  }
+  .slide3.fire .rollcart{animation:rollback 1.8s ease .9s forwards;}
+  @keyframes rollback{
+    0%{transform:translateX(40px);}
+    100%{transform:translateX(-150px);}
+  }
+
+  /* ===== Footer ===== */
+  .footer{
+    position:absolute; left:0; right:0; bottom:0; z-index:50;
+    padding:18px 28px 34px;
+    background:linear-gradient(180deg, rgba(255,255,255,0) 0%, #fff 36%);
+  }
+  .dots{display:flex; justify-content:center; gap:8px; margin-bottom:18px;}
+  .dot{width:8px; height:8px; border-radius:50%; background:#d7deea; transition:.3s;}
+  .dot.active{width:26px; background:var(--blue);}
+  .cta{
+    width:100%; border:none; cursor:pointer; font-family:inherit;
+    background:var(--blue); color:#fff; font-weight:800; font-size:16px;
+    padding:16px; border-radius:18px; transition:.25s;
+    box-shadow:0 12px 26px rgba(43,110,240,.32);
+  }
+  .cta:hover{background:var(--blue-d);}
+  .cta:active{transform:scale(.98);}
+
+  /* ===== Scroll hint ===== */
+  .hint{
+    position:absolute; left:50%; bottom:120px; transform:translateX(-50%);
+    z-index:45; display:flex; flex-direction:column; align-items:center; gap:8px;
+    color:var(--blue); font-size:13px; font-weight:700;
+    transition:opacity .5s; pointer-events:none;
+  }
+  .hint.hide{opacity:0;}
+  .hint .mouse{
+    width:24px; height:38px; border:2.5px solid var(--blue); border-radius:14px; position:relative;
+  }
+  .hint .mouse::after{
+    content:""; position:absolute; top:7px; left:50%; transform:translateX(-50%);
+    width:4px; height:7px; background:var(--blue); border-radius:3px;
+    animation:wheel 1.4s ease-in-out infinite;
+  }
+  @keyframes wheel{0%{opacity:0; top:7px}30%{opacity:1}60%{opacity:1; top:16px}100%{opacity:0; top:16px}}
+  .hint .arrow{animation:bob 1.6s ease-in-out infinite;}
+
+  /* ===== Done toast ===== */
+  .toast{
+    position:absolute; left:50%; bottom:120px; transform:translate(-50%,20px);
+    z-index:80; background:var(--ink); color:#fff; font-size:13.5px; font-weight:600;
+    padding:12px 20px; border-radius:14px; opacity:0; transition:.35s; pointer-events:none;
+    box-shadow:0 14px 30px rgba(0,0,0,.3);
+  }
+  .toast.show{opacity:1; transform:translate(-50%,0);}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="notch"></div>
+
+    <!-- Status bar -->
+    <div class="statusbar">
+      <span>9:41</span>
+      <span class="icons">
+        <!-- signal -->
+        <svg width="18" height="12" viewBox="0 0 18 12"><g fill="#16223a">
+          <rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/>
+          <rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/>
+        </g></svg>
+        <!-- wifi -->
+        <svg width="17" height="12" viewBox="0 0 17 12" fill="none"><path d="M8.5 11.2 1 4.2A11 11 0 0 1 16 4.2L8.5 11.2Z" fill="#16223a" opacity=".9"/></svg>
+        <!-- battery -->
+        <svg width="26" height="13" viewBox="0 0 26 13"><rect x="1" y="1" width="21" height="11" rx="3" fill="none" stroke="#16223a" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#16223a"/><rect x="23" y="4" width="2" height="5" rx="1" fill="#16223a" opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <button class="skip" id="skip">건너뛰기</button>
+
+    <!-- Sticky visuals -->
+    <div class="stage">
+      <!-- Step 1 -->
+      <section class="slide slide1" data-step="0">
+        <div class="art">
+          <div class="qrbox">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <svg class="qrimg" viewBox="0 0 100 100" shape-rendering="crispEdges">
+              <rect width="100" height="100" fill="#fff"/>
+              <g fill="#16223a">
+                <rect x="6" y="6" width="26" height="26"/><rect x="12" y="12" width="14" height="14" fill="#fff"/><rect x="15" y="15" width="8" height="8" fill="#16223a"/>
+                <rect x="68" y="6" width="26" height="26"/><rect x="74" y="12" width="14" height="14" fill="#fff"/><rect x="77" y="15" width="8" height="8" fill="#16223a"/>
+                <rect x="6" y="68" width="26" height="26"/><rect x="12" y="74" width="14" height="14" fill="#fff"/><rect x="15" y="77" width="8" height="8" fill="#16223a"/>
+                <rect x="40" y="6" width="6" height="6"/><rect x="52" y="12" width="6" height="6"/><rect x="40" y="24" width="6" height="6"/>
+                <rect x="44" y="44" width="6" height="6"/><rect x="56" y="44" width="6" height="6"/><rect x="68" y="40" width="6" height="6"/><rect x="80" y="48" width="6" height="6"/>
+                <rect x="44" y="60" width="6" height="6"/><rect x="68" y="62" width="6" height="6"/><rect x="80" y="68" width="6" height="6"/>
+                <rect x="44" y="80" width="6" height="6"/><rect x="56" y="80" width="6" height="6"/><rect x="68" y="80" width="6" height="6"/><rect x="80" y="80" width="6" height="6"/>
+              </g>
+            </svg>
+            <div class="scanline"></div>
+            <div class="popcheck">
+              <div class="badge">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+          </div>
+          <svg class="mascot" viewBox="0 0 120 120">
+            <use href="#cart"/>
+          </svg>
+        </div>
+        <div class="titles">
+          <h2>QR을 카트에 스캔해요</h2>
+          <p>카트 손잡이의 QR 코드를 비추면<br/>나만의 스마트 카트와 연결돼요.</p>
+        </div>
+      </section>
+
+      <!-- Step 2 -->
+      <section class="slide slide2" data-step="1">
+        <div class="art">
+          <div class="chip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            사용자 인식 완료
+          </div>
+          <svg class="pathsvg" viewBox="0 0 280 300" preserveAspectRatio="none">
+            <path class="pathline" d="M60 240 C 110 200, 90 150, 150 130 S 220 90, 210 60"/>
+          </svg>
+          <div class="ringwrap">
+            <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+          </div>
+          <svg class="mascot" viewBox="0 0 120 120" style="position:relative; bottom:auto;">
+            <use href="#cart"/>
+          </svg>
+        </div>
+        <div class="titles">
+          <h2>카트가 나를 알아보고 따라와요</h2>
+          <p>카메라로 사용자를 인식해<br/>두 손 가볍게, 카트가 자동으로 따라와요.</p>
+        </div>
+      </section>
+
+      <!-- Step 3 -->
+      <section class="slide slide3" data-step="2">
+        <div class="art">
+          <div class="pay">
+            <div class="card">
+              <div class="brand">CartPay · 신한카드</div>
+              <div class="chipgold"></div>
+              <div class="amt">19,400원</div>
+              <div class="sub">결제가 완료되었어요</div>
+            </div>
+            <div class="paycheck">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <button class="returnbtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 14l-4-4 4-4" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 10h9a5 5 0 0 1 0 10h-3" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              제자리로 복귀
+            </button>
+            <svg class="rollcart" viewBox="0 0 120 120"><use href="#cart"/></svg>
+          </div>
+        </div>
+        <div class="titles">
+          <h2>결제하면 카트가 스스로 복귀해요</h2>
+          <p>CartPay로 간편하게 결제하고<br/>복귀 버튼만 누르면 제자리로 돌아가요.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Scroll driver sentinels -->
+    <div class="scroll" id="scroll">
+      <div class="sentinel"></div>
+      <div class="sentinel"></div>
+      <div class="sentinel"></div>
+    </div>
+
+    <!-- Hint -->
+    <div class="hint" id="hint">
+      <span>스크롤해서 둘러보기</span>
+      <div class="mouse"></div>
+      <svg class="arrow" width="18" height="10" viewBox="0 0 18 10"><path d="M1 1l8 7 8-7" stroke="#2b6ef0" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div class="dots">
+        <span class="dot active"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <button class="cta" id="cta">다음</button>
+    </div>
+
+    <div class="toast" id="toast">CartMe와 함께 쇼핑을 시작해요! 🛒</div>
+  </div>
+
+  <!-- Mascot definition -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="cart" viewBox="0 0 120 120">
+        <!-- basket -->
+        <rect x="28" y="40" width="64" height="44" rx="14" fill="#2b6ef0"/>
+        <rect x="28" y="40" width="64" height="14" rx="7" fill="#3a78ff"/>
+        <!-- handle -->
+        <path d="M22 44 L30 44" stroke="#1b54c9" stroke-width="6" stroke-linecap="round"/>
+        <path d="M20 40 q4 4 2 10" stroke="#1b54c9" stroke-width="6" fill="none" stroke-linecap="round"/>
+        <!-- face -->
+        <circle cx="48" cy="62" r="6" fill="#fff"/><circle cx="50" cy="63" r="3" fill="#16223a"/>
+        <circle cx="72" cy="62" r="6" fill="#fff"/><circle cx="74" cy="63" r="3" fill="#16223a"/>
+        <path d="M52 72 q8 7 16 0" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="40" cy="70" r="4" fill="#ff9bb3" opacity=".7"/>
+        <circle cx="80" cy="70" r="4" fill="#ff9bb3" opacity=".7"/>
+        <!-- wheels -->
+        <circle cx="42" cy="94" r="9" fill="#16223a"/><circle cx="42" cy="94" r="3.5" fill="#fff"/>
+        <circle cx="78" cy="94" r="9" fill="#16223a"/><circle cx="78" cy="94" r="3.5" fill="#fff"/>
+      </symbol>
+    </defs>
+  </svg>
+
+<script>
+  const scroller = document.getElementById('scroll');
+  const slides   = [...document.querySelectorAll('.slide')];
+  const dots     = [...document.querySelectorAll('.dot')];
+  const cta      = document.getElementById('cta');
+  const skip     = document.getElementById('skip');
+  const hint     = document.getElementById('hint');
+  const toast    = document.getElementById('toast');
+  const labels   = ['다음', '다음', '시작하기'];
+  let current = -1;
+  const fired = [false, false, false];
+
+  function setStep(i){
+    if(i === current) return;
+    current = i;
+    slides.forEach((s,idx)=> s.classList.toggle('on', idx===i));
+    dots.forEach((d,idx)=> d.classList.toggle('active', idx===i));
+    cta.textContent = labels[i];
+
+    // (re)trigger the in-step "fire" animation once the step settles
+    slides[i].classList.remove('fire');
+    clearTimeout(setStep._t);
+    setStep._t = setTimeout(()=> slides[i].classList.add('fire'), 1500);
+  }
+
+  function onScroll(){
+    const h = scroller.clientHeight;
+    const idx = Math.round(scroller.scrollTop / h);
+    setStep(Math.max(0, Math.min(2, idx)));
+
+    if(scroller.scrollTop > 12) hint.classList.add('hide');
+    else hint.classList.remove('hide');
+  }
+
+  scroller.addEventListener('scroll', onScroll, {passive:true});
+
+  cta.addEventListener('click', ()=>{
+    if(current < 2){
+      scroller.scrollTo({top: scroller.clientHeight*(current+1), behavior:'smooth'});
+    } else {
+      finish();
+    }
+  });
+
+  skip.addEventListener('click', finish);
+
+  function finish(){
+    toast.classList.add('show');
+    setTimeout(()=> toast.classList.remove('show'), 2600);
+    // 실제 앱에서는 여기서 홈 화면으로 이동: navigate('/home')
+  }
+
+  // init
+  setStep(0);
+</script>
+</body>
+</html>
