@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.viewinterop.AndroidView
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import java.text.NumberFormat
@@ -9,7 +11,10 @@ import java.util.Locale
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,13 +28,17 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate as rotateDraw
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -45,7 +54,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.viewmodel.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.ImageBitmap
+import kotlin.math.abs
 
 /* ============================================================
  *  CartMe · 디자인 토큰  (CartMe.dc.html 기반)
@@ -85,10 +96,13 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
     // 상태바 영역까지 화면별 배경색이 채워지도록 바깥 Box 배경을 화면에 맞춘다.
     val screenBg = when (uiState.currentScreen) {
         Screen.SPLASH, Screen.SIGNUP, Screen.COMPLETION -> Blue
-        Screen.LOGIN -> Surface
+        Screen.LOGIN, Screen.ONBOARDING -> Surface
         Screen.DASHBOARD -> NavyDeep
-        Screen.SHOPPING, Screen.PAYMENT -> ScreenBg
+        Screen.SHOPPING, Screen.PAYMENT, Screen.SUPPORT -> ScreenBg
     }
+
+    // 고객센터(챗봇)에서 뒤로가기 눌렀을 때 돌아갈 화면을 기억한다.
+    var supportOrigin by remember { mutableStateOf(Screen.SHOPPING) }
 
     Box(
         modifier = Modifier
@@ -110,6 +124,9 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     isLoading = uiState.isLoading,
                     onSubmit = { n, p, email, pw -> viewModel.signUp(n, p, email, pw) },
                     onBack = { viewModel.navigateTo(Screen.LOGIN) }
+                )
+                Screen.ONBOARDING -> OnboardingScreen(
+                    onFinish = { viewModel.navigateTo(Screen.DASHBOARD) }
                 )
                 Screen.DASHBOARD -> {
                     LaunchedEffect(Unit) { viewModel.generateQR() }
@@ -135,6 +152,11 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     uiState = uiState,
                     onRestart = { viewModel.logout() }
                 )
+                Screen.SUPPORT -> SupportScreen(
+                    token = uiState.token,
+                    userName = uiState.userName,
+                    onBack = { viewModel.navigateTo(supportOrigin) }
+                )
             }
         }
 
@@ -145,7 +167,128 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     .align(Alignment.BottomCenter)
                     .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
             )
+
+            // 오른쪽 아래 떠 있는 챗봇(고객센터) 버튼
+            // SHOPPING 은 하단 결제 시트가 있어 조금 더 위로 띄운다.
+            val fabBottom = if (uiState.currentScreen == Screen.SHOPPING) 168.dp else 28.dp
+            ChatbotFab(
+                onClick = {
+                    supportOrigin = uiState.currentScreen
+                    viewModel.navigateTo(Screen.SUPPORT)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = fabBottom)
+            )
         }
+    }
+}
+
+/* ============================================================
+ *  챗봇 FAB — 오른쪽 아래 떠 있는 고객센터 런처
+ *  (Channel.io / 인터콤 스타일의 상담 위젯 pill)
+ * ============================================================ */
+@Composable
+private fun ChatbotFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // 은은하게 위아래로 떠오르는 모션
+    val t = rememberInfiniteTransition(label = "fab")
+    val floatY by t.animateFloat(
+        initialValue = 0f, targetValue = -5f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "fabFloat"
+    )
+    Row(
+        modifier = modifier
+            .offset(y = floatY.dp)
+            .shadow(20.dp, RoundedCornerShape(32.dp), ambientColor = Blue, spotColor = Blue.copy(alpha = 0.5f))
+            .clip(RoundedCornerShape(32.dp))
+            .background(Surface)
+            .border(1.dp, Line, RoundedCornerShape(32.dp))
+            .clickable { onClick() }
+            .padding(start = 7.dp, end = 18.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 마스코트 아바타 + 온라인 표시
+        Box(
+            Modifier.size(46.dp).clip(CircleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFF3A86FF), Color(0xFF1B54C9)))),
+            contentAlignment = Alignment.Center
+        ) {
+            Mascot(width = 32.dp, mood = "wave", ring = Color.White, mesh = Color(0xFFCFE2FF))
+            Box(
+                Modifier.align(Alignment.BottomEnd).offset(x = (-3).dp, y = (-3).dp)
+                    .size(12.dp).clip(CircleShape).background(Green)
+                    .border(2.dp, Surface, CircleShape)
+            )
+        }
+        Spacer(Modifier.width(11.dp))
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("도움 챗봇", fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
+                Spacer(Modifier.width(5.dp))
+                Text("🛒", fontSize = 12.sp)
+            }
+            Text("무엇이든 물어보세요", fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = TextSub,
+                modifier = Modifier.padding(top = 1.dp))
+        }
+    }
+}
+
+/* ============================================================
+ *  SUPPORT — 고객센터 챗봇 (WebView 로 chatbot.html 로드)
+ * ============================================================ */
+@Composable
+private fun SupportScreen(token: String, userName: String, onBack: () -> Unit) {
+    // 안드로이드 물리 뒤로가기도 이전 화면으로
+    BackHandler(onBack = onBack)
+
+    // 챗봇 WebView 가 '문의하기'를 백엔드로 전송할 수 있도록 base/token/name 전달
+    val chatUrl = remember(token, userName) {
+        fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+        "file:///android_asset/chatbot.html" +
+            "?base=" + enc(com.example.network.RetrofitClient.BASE_URL) +
+            "&token=" + enc(token) +
+            "&name=" + enc(userName)
+    }
+
+    Column(Modifier.fillMaxSize().background(ScreenBg)) {
+        // 상단 바
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Surface)
+                .padding(start = 12.dp, end = 20.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).clickable { onBack() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(4.dp))
+            Text("고객센터", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Navy)
+        }
+        Divider(color = Line, thickness = 1.dp)
+
+        // 챗봇 WebView — Column 에서 남은 공간만 채우도록 weight 사용
+        // (fillMaxSize 를 쓰면 상단 바 높이만큼 아래로 밀려 채팅/입력창이 화면 밖으로 잘린다)
+        AndroidView(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            factory = { ctx ->
+                android.webkit.WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = true
+                    settings.useWideViewPort = false
+                    settings.loadWithOverviewMode = false
+                    // file:// 페이지에서 백엔드(http://10.0.2.2:3000)로 fetch 허용
+                    @Suppress("DEPRECATION")
+                    settings.allowUniversalAccessFromFileURLs = true
+                    webViewClient = android.webkit.WebViewClient()
+                    setBackgroundColor(android.graphics.Color.parseColor("#F4F6FB"))
+                    loadUrl(chatUrl)
+                }
+            }
+        )
     }
 }
 
@@ -408,6 +551,392 @@ private fun LogoutChip(onClick: () -> Unit, onDark: Boolean = false) {
         Icon(Icons.Filled.ExitToApp, contentDescription = "로그아웃",
             tint = if (onDark) Color.White else TextSub, modifier = Modifier.size(19.dp))
     }
+}
+
+/* ============================================================
+ *  ONBOARDING — 회원가입 직후 튜토리얼 (스크롤 연동 3단계)
+ *    좌우로 스크롤(스와이프)하면 각 단계가 페이드로 전환된다.
+ * ============================================================ */
+private val DotIdle = Color(0xFFD7DEEA)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun OnboardingScreen(onFinish: () -> Unit) {
+    val pageCount = 3
+    val pagerState = rememberPagerState(pageCount = { pageCount })
+    val scope = rememberCoroutineScope()
+    val isLast = pagerState.currentPage == pageCount - 1
+
+    // 첫 진입 힌트: 한 번이라도 스크롤하면 사라진다.
+    var hintDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPageOffsetFraction }
+            .collect { if (abs(it) > 0.02f) hintDismissed = true }
+    }
+
+    Box(Modifier.fillMaxSize().background(Surface)) {
+        Column(Modifier.fillMaxSize()) {
+            // 상단 바 · 건너뛰기
+            Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp)) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !isLast,
+                    enter = fadeIn(), exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) {
+                    Text(
+                        "건너뛰기",
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onFinish() }
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
+            // 스크롤 연동 페이저
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.weight(1f),
+            ) { page ->
+                val offset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                val active = page == pagerState.settledPage
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            // 위치에 따라 부드럽게 페이드 + 살짝 축소
+                            val a = (1f - abs(offset)).coerceIn(0f, 1f)
+                            alpha = a
+                            val s = 0.92f + 0.08f * a
+                            scaleX = s; scaleY = s
+                        }
+                ) {
+                    when (page) {
+                        0 -> OnbStepScan(active)
+                        1 -> OnbStepRecognize(active)
+                        else -> OnbStepPay(active)
+                    }
+                }
+            }
+
+            // 점 인디케이터
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 18.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(pageCount) { i ->
+                    val selected = pagerState.currentPage == i
+                    val w by animateDpAsState(if (selected) 24.dp else 8.dp, label = "dotW")
+                    Box(
+                        Modifier
+                            .padding(horizontal = 4.dp)
+                            .height(8.dp).width(w)
+                            .clip(CircleShape)
+                            .background(if (selected) Blue else DotIdle)
+                    )
+                }
+            }
+
+            // 다음 / 시작하기
+            Box(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 28.dp)) {
+                PrimaryButton(
+                    text = if (isLast) "시작하기" else "다음",
+                    onClick = {
+                        if (isLast) onFinish()
+                        else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                    }
+                )
+            }
+        }
+
+        // 첫 진입 힌트
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !hintDismissed,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 132.dp)
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(BlueSoft)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val hintT = rememberInfiniteTransition(label = "hint")
+                val dx by hintT.animateFloat(
+                    initialValue = -3f, targetValue = 3f,
+                    animationSpec = infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "hintDx"
+                )
+                Icon(Icons.Filled.SwipeLeft, contentDescription = null, tint = Blue,
+                    modifier = Modifier.size(16.dp).offset(x = dx.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("스크롤해서 둘러보기", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Blue)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnbStepFrame(
+    art: @Composable BoxScope.() -> Unit,
+    title: String,
+    desc: String,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(Modifier.size(280.dp), contentAlignment = Alignment.Center, content = art)
+        Spacer(Modifier.height(28.dp))
+        Text(title, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = Navy,
+            textAlign = TextAlign.Center, lineHeight = 30.sp, letterSpacing = (-0.4).sp)
+        Spacer(Modifier.height(12.dp))
+        Text(desc, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = TextSub,
+            textAlign = TextAlign.Center, lineHeight = 22.sp)
+    }
+}
+
+/* 1단계 — QR 스캔: 스캔 라인이 훑고, 끝나면 체크 팝업 */
+@Composable
+private fun OnbStepScan(active: Boolean) {
+    var done by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (active) { done = false; delay(2200); done = true } else done = false
+    }
+    val scanT = rememberInfiniteTransition(label = "scan")
+    val lineY by scanT.animateFloat(
+        initialValue = 16f, targetValue = 156f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "lineY"
+    )
+    val checkScale by animateFloatAsState(
+        targetValue = if (done) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "checkScale"
+    )
+
+    OnbStepFrame(
+        art = {
+            Box(
+                Modifier.size(190.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Surface)
+                    .border(1.dp, InputBorder, RoundedCornerShape(28.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                QrCodeImage(content = "CARTME-PAIR-ONBOARDING", size = 132.dp)
+                // 코너 가이드
+                ScanCorners()
+                // 스캔 라인
+                Box(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp)
+                        .offset(y = (lineY - 95).dp).height(3.dp)
+                        .clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(Color.Transparent, Blue, Color.Transparent)))
+                        .alpha(if (done) 0f else 1f)
+                )
+                // 완료 체크
+                Box(
+                    Modifier.size(72.dp).scale(checkScale).clip(CircleShape).background(Green),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                        modifier = Modifier.size(38.dp))
+                }
+            }
+        },
+        title = "QR을 카트에 스캔해요",
+        desc = "카트 손잡이의 QR 코드를 비추면\n나만의 스마트 카트와 연결돼요."
+    )
+}
+
+@Composable
+private fun ScanCorners() {
+    Canvas(Modifier.size(160.dp)) {
+        val s = 26f
+        val w = 5f
+        val pad = 6f
+        val c = Blue
+        fun corner(ox: Float, oy: Float, dx: Int, dy: Int) {
+            drawLine(c, Offset(ox, oy), Offset(ox + dx * s, oy), strokeWidth = w, cap = StrokeCap.Round)
+            drawLine(c, Offset(ox, oy), Offset(ox, oy + dy * s), strokeWidth = w, cap = StrokeCap.Round)
+        }
+        corner(pad, pad, 1, 1)
+        corner(size.width - pad, pad, -1, 1)
+        corner(pad, size.height - pad, 1, -1)
+        corner(size.width - pad, size.height - pad, -1, -1)
+    }
+}
+
+/* 2단계 — 사용자 인식: 펄스 링 + 경로선 + "인식 완료" 칩 */
+@Composable
+private fun OnbStepRecognize(active: Boolean) {
+    var chip by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (active) { chip = false; delay(1300); chip = true } else chip = false
+    }
+    val pulseT = rememberInfiniteTransition(label = "pulse")
+    val phase by pulseT.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+        label = "phase"
+    )
+    val pathProgress by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(1800, easing = FastOutSlowInEasing), label = "path"
+    )
+
+    OnbStepFrame(
+        art = {
+            Canvas(Modifier.fillMaxSize()) {
+                val cx = size.width / 2f
+                val cy = size.height * 0.46f
+                val base = size.minDimension * 0.16f
+                // 펄스 링 3개 (위상차)
+                for (k in 0 until 3) {
+                    val p = (phase + k / 3f) % 1f
+                    drawCircle(
+                        color = Blue.copy(alpha = (1f - p) * 0.55f),
+                        radius = base * (0.5f + p * 2.0f),
+                        center = Offset(cx, cy),
+                        style = Stroke(width = 4f)
+                    )
+                }
+                // 이동 경로선 (progress 만큼 그려짐)
+                val full = Path().apply {
+                    moveTo(size.width * 0.2f, size.height * 0.86f)
+                    cubicTo(
+                        size.width * 0.35f, size.height * 0.66f,
+                        size.width * 0.30f, size.height * 0.40f,
+                        cx, cy
+                    )
+                }
+                val pm = PathMeasure().apply { setPath(full, false) }
+                val seg = Path()
+                pm.getSegment(0f, pm.length * pathProgress, seg, true)
+                drawPath(seg, Blue, style = Stroke(width = 5f, cap = StrokeCap.Round))
+                if (pathProgress > 0.02f) {
+                    val pos = pm.getPosition(pm.length * pathProgress)
+                    drawCircle(Blue, radius = 6f, center = pos)
+                }
+            }
+            Mascot(width = 140.dp, mood = "idle")
+            // 인식 완료 칩
+            androidx.compose.animation.AnimatedVisibility(
+                visible = chip,
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(999.dp)).background(Blue)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                        modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("사용자 인식 완료", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        },
+        title = "카트가 나를 알아보고 따라와요",
+        desc = "카메라로 사용자를 인식해\n두 손 가볍게, 카트가 자동으로 따라와요."
+    )
+}
+
+/* 3단계 — 결제·복귀: 카드 슬라이드인 → 체크 → 복귀 버튼 글로우 → 카트 복귀 */
+@Composable
+private fun OnbStepPay(active: Boolean) {
+    // phase: 0 대기 · 1 카드인 · 2 체크 · 3 복귀버튼 강조 · 4 카트 복귀
+    var phase by remember { mutableStateOf(0) }
+    LaunchedEffect(active) {
+        if (active) {
+            phase = 0; delay(250); phase = 1; delay(750)
+            phase = 2; delay(750); phase = 3; delay(1100); phase = 4
+        } else phase = 0
+    }
+    val cardX by animateDpAsState(
+        if (phase >= 1) 0.dp else 180.dp,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow), label = "cardX"
+    )
+    val checkScale by animateFloatAsState(
+        if (phase >= 2) 1f else 0f,
+        spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "payCheck"
+    )
+    val cartX by animateDpAsState(
+        if (phase >= 4) (-150).dp else 44.dp,
+        animationSpec = tween(1500, easing = FastOutSlowInEasing), label = "cartX"
+    )
+    val glowT = rememberInfiniteTransition(label = "glow")
+    val glow by glowT.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "glowA"
+    )
+
+    OnbStepFrame(
+        art = {
+            // 결제 카드
+            Box(
+                Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                    .offset(x = cardX)
+                    .width(218.dp).height(130.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF3A86FF), Color(0xFF1B54C9))))
+                    .padding(16.dp)
+            ) {
+                Text("CartPay · 신한카드", color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Box(Modifier.align(Alignment.CenterStart).offset(y = 6.dp)
+                    .size(30.dp, 22.dp).clip(RoundedCornerShape(5.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFFFFE39A), Color(0xFFD9A93F)))))
+                Column(Modifier.align(Alignment.BottomStart)) {
+                    Text("${won(19400)}원", color = Color.White,
+                        fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
+                    Text("결제가 완료되었어요", color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+            // 결제 완료 체크
+            Box(
+                Modifier.align(Alignment.TopCenter).offset(y = 96.dp)
+                    .size(54.dp).scale(checkScale).clip(CircleShape).background(Green),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                    modifier = Modifier.size(28.dp))
+            }
+            // 복귀 버튼 (강조 글로우)
+            val glowing = phase >= 3
+            Row(
+                Modifier.align(Alignment.Center).offset(y = 26.dp)
+                    .graphicsLayer {
+                        if (glowing) { val s = 1f + 0.05f * glow; scaleX = s; scaleY = s }
+                    }
+                    .shadow(if (glowing) (8 + 12 * glow).dp else 0.dp, RoundedCornerShape(14.dp),
+                        ambientColor = Blue, spotColor = Blue)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Blue)
+                    .padding(horizontal = 22.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.KeyboardReturn, contentDescription = null, tint = Color.White,
+                    modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("제자리로 복귀", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            // 복귀하는 카트
+            Box(Modifier.align(Alignment.BottomCenter).offset(x = cartX)) {
+                Mascot(width = 92.dp, mood = "idle")
+            }
+        },
+        title = "결제하면 카트가 스스로 복귀해요",
+        desc = "CartPay로 간편하게 결제하고\n복귀 버튼만 누르면 제자리로 돌아가요."
+    )
 }
 
 /* ============================================================

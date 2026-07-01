@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CartMe · 도움 챗봇</title>
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<style>
+  :root{
+    --blue:#2b6ef0;
+    --blue-d:#1b54c9;
+    --blue-soft:#eaf1ff;
+    --ink:#16223a;
+    --muted:#7d899e;
+    --line:#eef1f6;
+    --ok:#1fbf75;
+    --bg:#f4f6fb;
+    --shadow:0 18px 40px rgba(43,110,240,.16);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:'Pretendard',-apple-system,system-ui,sans-serif;
+    background:
+      radial-gradient(900px 500px at 20% 0%, #eef4ff 0%, transparent 60%),
+      radial-gradient(700px 500px at 100% 100%, #f3f7ff 0%, transparent 55%),
+      #e9edf5;
+    min-height:100%;
+    display:flex; align-items:center; justify-content:center;
+    padding:32px 16px;
+    color:var(--ink);
+  }
+
+  /* ===== Phone frame ===== */
+  .phone{
+    position:relative;
+    width:390px; height:844px;
+    background:#fff;
+    border-radius:54px;
+    box-shadow:0 40px 90px rgba(20,34,58,.28), 0 0 0 12px #0e1320, 0 0 0 13px #2a3346;
+    overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  .notch{
+    position:absolute; top:11px; left:50%; transform:translateX(-50%);
+    width:128px; height:30px; background:#0e1320; border-radius:18px; z-index:60;
+  }
+
+  /* ===== Status bar ===== */
+  .statusbar{
+    position:absolute; top:0; left:0; right:0; height:54px; z-index:55;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 30px 0;
+    font-weight:600; font-size:15px; color:var(--ink);
+    pointer-events:none;
+  }
+  .statusbar .icons{display:flex; align-items:center; gap:6px;}
+  .statusbar svg{display:block;}
+
+  /* ===== Header ===== */
+  .header{
+    position:relative; z-index:40; flex:0 0 auto;
+    padding:64px 20px 16px;
+    background:#fff;
+    border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:12px;
+  }
+  .header .back{
+    width:38px; height:38px; border-radius:12px; border:none; cursor:pointer;
+    background:#f3f5f9; display:flex; align-items:center; justify-content:center;
+    transition:.2s;
+  }
+  .header .back:hover{background:#e8ecf4;}
+  .avatar{
+    position:relative; width:44px; height:44px; border-radius:14px;
+    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 8px 18px rgba(43,110,240,.35);
+  }
+  .avatar .live{
+    position:absolute; right:-2px; bottom:-2px; width:12px; height:12px;
+    border-radius:50%; background:var(--ok); border:2.5px solid #fff;
+  }
+  .header .who{flex:1;}
+  .header .who h1{font-size:16.5px; font-weight:800; letter-spacing:-.3px;}
+  .header .who p{font-size:12.5px; color:var(--ok); font-weight:600; margin-top:2px;
+    display:flex; align-items:center; gap:5px;}
+  .header .who p .pulse{width:6px; height:6px; border-radius:50%; background:var(--ok);}
+
+  /* ===== Chat area ===== */
+  .chat{
+    flex:1 1 auto; overflow-y:auto; overflow-x:hidden;
+    padding:22px 18px 12px;
+    background:
+      radial-gradient(600px 300px at 50% -10%, #eef4ff 0%, transparent 60%),
+      var(--bg);
+    scrollbar-width:none;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .chat::-webkit-scrollbar{display:none;}
+
+  .daytag{
+    align-self:center; font-size:11.5px; font-weight:600; color:var(--muted);
+    background:#fff; padding:5px 14px; border-radius:999px;
+    box-shadow:0 4px 12px rgba(20,34,58,.06);
+  }
+
+  /* message rows */
+  .row{display:flex; gap:9px; align-items:flex-end; max-width:100%;
+    animation:rise .34s cubic-bezier(.2,.8,.25,1) both;}
+  @keyframes rise{from{opacity:0; transform:translateY(12px);} to{opacity:1; transform:none;}}
+  .row.bot{align-self:flex-start;}
+  .row.user{align-self:flex-end; flex-direction:row-reverse;}
+  .miniava{
+    flex:0 0 auto; width:30px; height:30px; border-radius:10px;
+    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    display:flex; align-items:center; justify-content:center; margin-bottom:2px;
+    box-shadow:0 6px 12px rgba(43,110,240,.3);
+  }
+  .bubble{
+    max-width:250px; padding:13px 16px; font-size:14.5px; line-height:1.6;
+    font-weight:500; letter-spacing:-.2px; position:relative;
+    box-shadow:0 6px 16px rgba(20,34,58,.07);
+  }
+  .row.bot .bubble{
+    background:#fff; color:var(--ink);
+    border-radius:6px 18px 18px 18px;
+  }
+  .row.user .bubble{
+    background:var(--blue); color:#fff;
+    border-radius:18px 6px 18px 18px;
+    box-shadow:0 8px 18px rgba(43,110,240,.32);
+  }
+  .bubble b{font-weight:800;}
+  .bubble .lead{font-weight:800; display:block; margin-bottom:6px; letter-spacing:-.3px;}
+  .bubble ol{margin:4px 0 2px; padding-left:18px;}
+  .bubble ol li{margin:5px 0; line-height:1.55;}
+  .bubble .tip{
+    margin-top:11px; padding:10px 12px; border-radius:12px;
+    background:var(--blue-soft); color:var(--blue-d);
+    font-size:13px; font-weight:600; line-height:1.5;
+    display:flex; gap:8px; align-items:flex-start;
+  }
+  .bubble .tip svg{flex:0 0 auto; margin-top:1px;}
+
+  /* typing indicator */
+  .typing{display:flex; gap:5px; padding:16px 18px;}
+  .typing span{
+    width:8px; height:8px; border-radius:50%; background:#c3ccdb;
+    animation:blink 1.3s infinite ease-in-out;
+  }
+  .typing span:nth-child(2){animation-delay:.18s;}
+  .typing span:nth-child(3){animation-delay:.36s;}
+  @keyframes blink{0%,60%,100%{opacity:.3; transform:translateY(0);}30%{opacity:1; transform:translateY(-4px);}}
+
+  /* ===== Quick replies ===== */
+  .quick{
+    flex:0 0 auto; background:#fff; border-top:1px solid var(--line);
+    padding:16px 18px calc(20px + env(safe-area-inset-bottom));
+    box-shadow:0 -12px 30px rgba(20,34,58,.05);
+  }
+  .quick .qlabel{
+    font-size:12px; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px;
+    display:flex; align-items:center; gap:7px;
+  }
+  .quick .qlabel .bar{width:16px; height:2px; border-radius:2px; background:var(--blue);}
+  .chips{display:flex; flex-wrap:wrap; gap:9px;}
+  .chip{
+    border:1.5px solid var(--line); background:#fff; cursor:pointer;
+    font-family:inherit; font-size:13.5px; font-weight:600; color:var(--ink);
+    padding:11px 15px; border-radius:14px; transition:.18s;
+    display:flex; align-items:center; gap:8px;
+    box-shadow:0 4px 10px rgba(20,34,58,.04);
+  }
+  .chip:hover{border-color:var(--blue); color:var(--blue); transform:translateY(-1px);
+    box-shadow:0 8px 18px rgba(43,110,240,.14);}
+  .chip:active{transform:scale(.97);}
+  .chip .ico{font-size:15px; line-height:1;}
+  .chip.agent{
+    background:var(--blue); color:#fff; border-color:var(--blue);
+    box-shadow:0 8px 18px rgba(43,110,240,.3); width:100%; justify-content:center;
+    margin-top:4px;
+  }
+  .chip.agent:hover{background:var(--blue-d); color:#fff;}
+  .chip.reset{background:transparent; border-style:dashed; color:var(--muted); width:100%; justify-content:center;}
+  .chip.reset:hover{color:var(--blue); border-color:var(--blue);}
+
+  .fade-swap{animation:swapin .3s ease both;}
+  @keyframes swapin{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="notch"></div>
+
+    <!-- Status bar -->
+    <div class="statusbar">
+      <span>9:41</span>
+      <span class="icons">
+        <svg width="18" height="12" viewBox="0 0 18 12"><g fill="#16223a">
+          <rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/>
+          <rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/>
+        </g></svg>
+        <svg width="17" height="12" viewBox="0 0 17 12" fill="none"><path d="M8.5 11.2 1 4.2A11 11 0 0 1 16 4.2L8.5 11.2Z" fill="#16223a" opacity=".9"/></svg>
+        <svg width="26" height="13" viewBox="0 0 26 13"><rect x="1" y="1" width="21" height="11" rx="3" fill="none" stroke="#16223a" stroke-opacity=".5"/><rect x="3" y="3" width="16" height="7" rx="1.5" fill="#16223a"/><rect x="23" y="4" width="2" height="5" rx="1" fill="#16223a" opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+      <button class="back" aria-label="뒤로">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="#16223a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="avatar">
+        <svg width="26" height="26" viewBox="0 0 120 120"><use href="#cart"/></svg>
+        <span class="live"></span>
+      </div>
+      <div class="who">
+        <h1>카티 · 도움 챗봇</h1>
+        <p><span class="pulse"></span> 지금 도와드릴 수 있어요</p>
+      </div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat" id="chat">
+      <div class="daytag">오늘</div>
+      <div class="row bot">
+        <div class="miniava"><svg width="18" height="18" viewBox="0 0 120 120"><use href="#cart"/></svg></div>
+        <div class="bubble">
+          <span class="lead">안녕하세요, 카티예요 🛒</span>
+          쇼핑 중에 불편한 점이 있으셨나요?<br/>
+          아래에서 <b>궁금한 상황을 골라주세요.</b> 바로 안내해 드릴게요!
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick replies -->
+    <div class="quick">
+      <div class="qlabel"><span class="bar"></span> 자주 묻는 문제</div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+
+  <!-- Mascot definition -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="cart" viewBox="0 0 120 120">
+        <rect x="28" y="40" width="64" height="44" rx="14" fill="#ffffff" opacity=".95"/>
+        <rect x="28" y="40" width="64" height="14" rx="7" fill="#ffffff"/>
+        <circle cx="44" cy="94" r="7" fill="#ffffff"/>
+        <circle cx="80" cy="94" r="7" fill="#ffffff"/>
+        <circle cx="50" cy="60" r="5.5" fill="#2b6ef0"/>
+        <circle cx="70" cy="60" r="5.5" fill="#2b6ef0"/>
+        <path d="M48 72q12 9 24 0" stroke="#2b6ef0" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </symbol>
+    </defs>
+  </svg>
+
+<script>
+  /* ===== Pre-defined problems & pre-written answers ===== */
+  const bulb = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.2-1 2.5H9c0-1.3-.3-1.8-1-2.5A6 6 0 0 1 12 3Z" stroke="#1b54c9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  const FAQ = [
+    {
+      id:"follow",
+      ico:"🧭",
+      q:"카트가 저를 안 따라와요",
+      a:`<span class="lead">카트가 따라오지 않을 때</span>
+         아래 순서대로 확인해 주세요.
+         <ol>
+           <li>카트 앞 <b>카메라 렌즈</b>에 손이나 짐이 가려지지 않았는지 확인해요.</li>
+           <li>카트와 <b>1~2m 거리</b>를 두고 정면에 서 주세요.</li>
+           <li>앱 화면에서 <b>‘따라오기’</b>가 켜져 있는지 확인해요.</li>
+         </ol>
+         <div class="tip">${bulb}거리가 너무 멀어지면 안전을 위해 자동으로 멈춰요. 가까이 다가가면 다시 따라와요.</div>`
+    },
+    {
+      id:"qr",
+      ico:"📷",
+      q:"QR 스캔이 안 돼요",
+      a:`<span class="lead">QR 연결이 안 될 때</span>
+         <ol>
+           <li>카트 손잡이의 <b>QR 스티커</b>를 화면 안에 꽉 차게 비춰주세요.</li>
+           <li>어두우면 인식이 어려워요. <b>밝은 곳</b>에서 다시 시도해요.</li>
+           <li>앱의 <b>카메라 권한</b>이 허용되어 있는지 확인해요.</li>
+         </ol>
+         <div class="tip">${bulb}그래도 안 되면 손잡이의 카트 번호를 직접 입력해 연결할 수 있어요.</div>`
+    },
+    {
+      id:"pay",
+      ico:"💳",
+      q:"결제가 안 돼요",
+      a:`<span class="lead">결제가 진행되지 않을 때</span>
+         <ol>
+           <li>담은 상품이 <b>장바구니에 모두 인식</b>됐는지 확인해요.</li>
+           <li>등록된 <b>CartPay 카드</b>가 유효한지 확인해요.</li>
+           <li>네트워크가 불안정하면 잠시 후 <b>다시 결제</b>를 눌러주세요.</li>
+         </ol>
+         <div class="tip">${bulb}결제가 두 번 되진 않아요. 중복이 걱정되면 ‘주문내역’에서 확인할 수 있어요.</div>`
+    },
+    {
+      id:"stop",
+      ico:"⛔",
+      q:"카트가 갑자기 멈췄어요",
+      a:`<span class="lead">카트가 멈췄을 때</span>
+         대부분 <b>안전 감지 기능</b> 때문이에요.
+         <ol>
+           <li>바퀴 주변에 <b>장애물</b>이 없는지 살펴봐요.</li>
+           <li>앱에서 <b>정지</b> 상태로 되어 있진 않은지 확인해요.</li>
+           <li><b>복귀</b>가 아니라 <b>재개</b> 버튼을 눌러 다시 움직여요.</li>
+         </ol>
+         <div class="tip">${bulb}사람이나 물건이 가까이 오면 스스로 멈춰요. 정상적인 안전 동작이에요.</div>`
+    },
+    {
+      id:"return",
+      ico:"↩️",
+      q:"복귀 버튼을 눌렀는데 안 돌아가요",
+      a:`<span class="lead">카트가 복귀하지 않을 때</span>
+         <ol>
+           <li><b>결제가 완료</b>된 뒤에만 복귀할 수 있어요.</li>
+           <li>이동 경로에 <b>사람이 많으면</b> 잠시 기다렸다가 출발해요.</li>
+           <li>앱 상단에 <b>‘복귀 중’</b> 표시가 있는지 확인해요.</li>
+         </ol>
+         <div class="tip">${bulb}복귀는 조금 천천히 진행돼요. 1분 넘게 그대로면 매장 직원을 불러주세요.</div>`
+    },
+    {
+      id:"battery",
+      ico:"🔋",
+      q:"배터리가 부족하대요",
+      a:`<span class="lead">배터리가 부족할 때</span>
+         <ol>
+           <li>남은 쇼핑이 짧다면 <b>그대로 이용</b>해도 괜찮아요.</li>
+           <li>배터리가 매우 낮으면 <b>가까운 충전 스테이션</b>으로 안내해 드려요.</li>
+           <li>결제 후 <b>복귀</b>하면 카트가 알아서 충전하러 가요.</li>
+         </ol>
+         <div class="tip">${bulb}배터리가 20% 아래로 내려가면 앱이 미리 알려드려요.</div>`
+    }
+  ];
+
+  const chat  = document.getElementById('chat');
+  const chips = document.getElementById('chips');
+  let busy = false;
+
+  const cartIco = '<svg width="18" height="18" viewBox="0 0 120 120"><use href="#cart"/></svg>';
+
+  function scrollDown(){ chat.scrollTop = chat.scrollHeight; }
+
+  function addUser(text){
+    const row = document.createElement('div');
+    row.className = 'row user';
+    row.innerHTML = `<div class="bubble">${text}</div>`;
+    chat.appendChild(row);
+    scrollDown();
+  }
+
+  function addTyping(){
+    const row = document.createElement('div');
+    row.className = 'row bot';
+    row.id = 'typing';
+    row.innerHTML = `<div class="miniava">${cartIco}</div><div class="bubble typing"><span></span><span></span><span></span></div>`;
+    chat.appendChild(row);
+    scrollDown();
+  }
+
+  function addBot(html){
+    const row = document.createElement('div');
+    row.className = 'row bot';
+    row.innerHTML = `<div class="miniava">${cartIco}</div><div class="bubble">${html}</div>`;
+    chat.appendChild(row);
+    scrollDown();
+  }
+
+  function answer(item){
+    if(busy) return;
+    busy = true;
+    addUser(item.q);
+    addTyping();
+    setTimeout(()=>{
+      document.getElementById('typing')?.remove();
+      addBot(item.a);
+      busy = false;
+      renderFollowUp();
+    }, 850);
+  }
+
+  /* initial menu of problems */
+  function renderMenu(){
+    chips.innerHTML = '';
+    chips.classList.add('fade-swap');
+    FAQ.forEach(item=>{
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.innerHTML = `<span class="ico">${item.ico}</span> ${item.q}`;
+      b.onclick = ()=>answer(item);
+      chips.appendChild(b);
+    });
+    const agent = document.createElement('button');
+    agent.className = 'chip agent';
+    agent.innerHTML = `<span class="ico">🎧</span> 매장 직원 · 상담원 연결`;
+    agent.onclick = ()=>{
+      if(busy) return; busy = true;
+      addUser('상담원 연결이 필요해요');
+      addTyping();
+      setTimeout(()=>{
+        document.getElementById('typing')?.remove();
+        addBot(`<span class="lead">직원을 연결해 드릴게요 🎧</span>
+          가까운 매장 직원에게 <b>도움 요청</b>을 보냈어요.<br/>
+          카트 화면의 <b>파란 불빛</b>을 보고 직원이 찾아올 거예요. 잠시만 기다려 주세요!
+          <div class="tip">${bulb}급한 경우 카트 손잡이의 <b>호출 버튼</b>을 3초간 눌러도 돼요.</div>`);
+        busy = false;
+        renderFollowUp();
+      }, 850);
+    };
+    chips.appendChild(agent);
+    setTimeout(()=>chips.classList.remove('fade-swap'), 320);
+  }
+
+  /* after an answer: offer to go back to the menu */
+  function renderFollowUp(){
+    chips.innerHTML = '';
+    chips.classList.add('fade-swap');
+    const back = document.createElement('button');
+    back.className = 'chip reset';
+    back.innerHTML = `↺ 다른 문제 물어보기`;
+    back.onclick = ()=>{
+      addBot(`도움이 되었길 바라요! 😊 다른 궁금한 점을 골라주세요.`);
+      renderMenu();
+    };
+    chips.appendChild(back);
+    setTimeout(()=>chips.classList.remove('fade-swap'), 320);
+  }
+
+  renderMenu();
+</script>
+</body>
+</html>

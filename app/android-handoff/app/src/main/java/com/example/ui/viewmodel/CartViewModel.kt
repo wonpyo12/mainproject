@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class Screen {
-    SPLASH, LOGIN, SIGNUP, DASHBOARD, SHOPPING, PAYMENT, COMPLETION
+    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, SUPPORT
 }
 
 enum class TrackingState {
@@ -65,7 +65,7 @@ class CartViewModel : ViewModel() {
     // ──────────────────────────────────────────────────────
     // [파트 1] 로그인: POST /api/auth/login → JWT 저장
     // ──────────────────────────────────────────────────────
-    fun login(email: String, password: String) {
+    fun login(email: String, password: String, firstTime: Boolean = false) {
         if (email.isBlank() || password.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "이메일과 비밀번호를 입력해 주세요.")
             return
@@ -76,7 +76,8 @@ class CartViewModel : ViewModel() {
                 val response = api.login(LoginRequest(email, password))
                 if (response.success && response.token != null && response.user != null) {
                     _uiState.value = _uiState.value.copy(
-                        currentScreen = Screen.DASHBOARD,
+                        // 회원가입 직후엔 온보딩 튜토리얼을 먼저 보여준다.
+                        currentScreen = if (firstTime) Screen.ONBOARDING else Screen.DASHBOARD,
                         token = response.token,
                         userId = response.user.id,
                         userName = response.user.name,
@@ -114,8 +115,8 @@ class CartViewModel : ViewModel() {
             try {
                 val response = api.register(RegisterRequest(email, password, name, phone))
                 if (response.success) {
-                    // 가입 성공 → 자동 로그인
-                    login(email, password)
+                    // 가입 성공 → 자동 로그인 → 온보딩 튜토리얼
+                    login(email, password, firstTime = true)
                 } else {
                     _uiState.value = _uiState.value.copy(
                         errorMessage = response.message,

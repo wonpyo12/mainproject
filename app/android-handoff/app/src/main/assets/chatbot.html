@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>CartMe · 도움 챗봇</title>
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<style>
+  :root{
+    --blue:#2b6ef0;
+    --blue-d:#1b54c9;
+    --blue-soft:#eaf1ff;
+    --ink:#16223a;
+    --muted:#7d899e;
+    --line:#eef1f6;
+    --ok:#1fbf75;
+    --bg:#f4f6fb;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{height:100%;}
+  body{
+    font-family:'Pretendard',-apple-system,system-ui,sans-serif;
+    color:var(--ink);
+    background:var(--bg);
+    display:flex; flex-direction:column;
+    height:100%; min-height:100%;
+    overflow:hidden;
+  }
+
+  /* ===== Header ===== */
+  .header{
+    flex:0 0 auto;
+    padding:14px 18px;
+    background:#fff;
+    border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:12px;
+  }
+  .avatar{
+    position:relative; width:44px; height:44px; border-radius:14px;
+    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 8px 18px rgba(43,110,240,.35);
+  }
+  .avatar .live{
+    position:absolute; right:-2px; bottom:-2px; width:12px; height:12px;
+    border-radius:50%; background:var(--ok); border:2.5px solid #fff;
+  }
+  .header .who{flex:1;}
+  .header .who h1{font-size:16.5px; font-weight:800; letter-spacing:-.3px;}
+  .header .who p{font-size:12.5px; color:var(--ok); font-weight:600; margin-top:2px;
+    display:flex; align-items:center; gap:5px;}
+  .header .who p .pulse{width:6px; height:6px; border-radius:50%; background:var(--ok);}
+
+  /* ===== Chat area ===== */
+  .chat{
+    flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
+    padding:22px 18px 12px;
+    background:
+      radial-gradient(600px 300px at 50% -10%, #eef4ff 0%, transparent 60%),
+      var(--bg);
+    -webkit-overflow-scrolling:touch;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .chat::-webkit-scrollbar{display:none;}
+
+  .daytag{
+    align-self:center; font-size:11.5px; font-weight:600; color:var(--muted);
+    background:#fff; padding:5px 14px; border-radius:999px;
+    box-shadow:0 4px 12px rgba(20,34,58,.06);
+  }
+
+  .row{display:flex; gap:9px; align-items:flex-end; max-width:100%;
+    animation:rise .34s cubic-bezier(.2,.8,.25,1) both;}
+  @keyframes rise{from{opacity:0; transform:translateY(12px);} to{opacity:1; transform:none;}}
+  .row.bot{align-self:flex-start;}
+  .row.user{align-self:flex-end; flex-direction:row-reverse;}
+  .miniava{
+    flex:0 0 auto; width:30px; height:30px; border-radius:10px;
+    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    display:flex; align-items:center; justify-content:center; margin-bottom:2px;
+    box-shadow:0 6px 12px rgba(43,110,240,.3);
+  }
+  .bubble{
+    max-width:78vw; padding:13px 16px; font-size:14.5px; line-height:1.6;
+    font-weight:500; letter-spacing:-.2px; position:relative;
+    box-shadow:0 6px 16px rgba(20,34,58,.07);
+  }
+  .row.bot .bubble{background:#fff; color:var(--ink); border-radius:6px 18px 18px 18px;}
+  .row.user .bubble{background:var(--blue); color:#fff; border-radius:18px 6px 18px 18px;
+    box-shadow:0 8px 18px rgba(43,110,240,.32);}
+  .bubble b{font-weight:800;}
+  .bubble .lead{font-weight:800; display:block; margin-bottom:6px; letter-spacing:-.3px;}
+  .bubble ol{margin:4px 0 2px; padding-left:18px;}
+  .bubble ol li{margin:5px 0; line-height:1.55;}
+  .bubble .tip{
+    margin-top:11px; padding:10px 12px; border-radius:12px;
+    background:var(--blue-soft); color:var(--blue-d);
+    font-size:13px; font-weight:600; line-height:1.5;
+    display:flex; gap:8px; align-items:flex-start;
+  }
+  .bubble .tip svg{flex:0 0 auto; margin-top:1px;}
+
+  .typing{display:flex; gap:5px; padding:16px 18px;}
+  .typing span{width:8px; height:8px; border-radius:50%; background:#c3ccdb;
+    animation:blink 1.3s infinite ease-in-out;}
+  .typing span:nth-child(2){animation-delay:.18s;}
+  .typing span:nth-child(3){animation-delay:.36s;}
+  @keyframes blink{0%,60%,100%{opacity:.3; transform:translateY(0);}30%{opacity:1; transform:translateY(-4px);}}
+
+  /* ===== Quick replies ===== */
+  .quick{
+    flex:0 0 auto; background:#fff; border-top:1px solid var(--line);
+    padding:16px 18px calc(18px + env(safe-area-inset-bottom));
+    box-shadow:0 -12px 30px rgba(20,34,58,.05);
+  }
+  .quick .qlabel{
+    font-size:12px; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px;
+    display:flex; align-items:center; gap:7px;
+  }
+  .quick .qlabel .bar{width:16px; height:2px; border-radius:2px; background:var(--blue);}
+  .chips{display:flex; flex-wrap:wrap; gap:9px;}
+  .chip{
+    border:1.5px solid var(--line); background:#fff; cursor:pointer;
+    font-family:inherit; font-size:13.5px; font-weight:600; color:var(--ink);
+    padding:11px 15px; border-radius:14px; transition:.18s;
+    display:flex; align-items:center; gap:8px;
+    box-shadow:0 4px 10px rgba(20,34,58,.04);
+    -webkit-tap-highlight-color:transparent;
+  }
+  .chip:active{transform:scale(.97); border-color:var(--blue); color:var(--blue);}
+  .chip .ico{font-size:15px; line-height:1;}
+  .chip.agent{background:var(--blue); color:#fff; border-color:var(--blue);
+    box-shadow:0 8px 18px rgba(43,110,240,.3); width:100%; justify-content:center; margin-top:4px;}
+  .chip.reset{background:transparent; border-style:dashed; color:var(--muted); width:100%; justify-content:center;}
+  .chip.inquiry{background:var(--blue); color:#fff; border-color:var(--blue);
+    box-shadow:0 8px 18px rgba(43,110,240,.3); width:100%; justify-content:center; margin-top:4px;}
+
+  /* 문의 입력 폼 */
+  .inqform{width:100%; animation:swapin .3s ease both;}
+  .inqform textarea{
+    width:100%; min-height:92px; resize:none; font-family:inherit;
+    font-size:14px; line-height:1.55; color:var(--ink);
+    border:1.5px solid var(--line); border-radius:14px; padding:12px 14px;
+    background:#fff; outline:none; -webkit-tap-highlight-color:transparent;
+  }
+  .inqform textarea:focus{border-color:var(--blue);}
+  .inqrow{display:flex; gap:9px; margin-top:10px;}
+  .inqrow button{
+    flex:1; border:none; cursor:pointer; font-family:inherit; font-weight:700;
+    font-size:14px; padding:12px; border-radius:14px; -webkit-tap-highlight-color:transparent;
+  }
+  .inqrow .cancel{flex:0 0 auto; padding:12px 18px; background:#fff; color:var(--muted); border:1.5px solid var(--line);}
+  .inqrow .send{background:var(--blue); color:#fff; box-shadow:0 8px 18px rgba(43,110,240,.3);}
+  .inqrow .send:disabled{opacity:.55;}
+
+  .fade-swap{animation:swapin .3s ease both;}
+  @keyframes swapin{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
+</style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="avatar">
+      <svg width="26" height="26" viewBox="0 0 120 120"><use href="#cart"/></svg>
+      <span class="live"></span>
+    </div>
+    <div class="who">
+      <h1>카티 · 도움 챗봇</h1>
+      <p><span class="pulse"></span> 지금 도와드릴 수 있어요</p>
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div class="chat" id="chat">
+    <div class="daytag">오늘</div>
+    <div class="row bot">
+      <div class="miniava"><svg width="18" height="18" viewBox="0 0 120 120"><use href="#cart"/></svg></div>
+      <div class="bubble">
+        <span class="lead">안녕하세요, 카티예요 🛒</span>
+        쇼핑 중에 불편한 점이 있으셨나요?<br/>
+        아래에서 <b>궁금한 상황을 골라주세요.</b> 바로 안내해 드릴게요!
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick replies -->
+  <div class="quick">
+    <div class="qlabel"><span class="bar"></span> 자주 묻는 문제</div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <!-- Mascot definition -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="cart" viewBox="0 0 120 120">
+        <rect x="28" y="40" width="64" height="44" rx="14" fill="#ffffff" opacity=".95"/>
+        <rect x="28" y="40" width="64" height="14" rx="7" fill="#ffffff"/>
+        <circle cx="44" cy="94" r="7" fill="#ffffff"/>
+        <circle cx="80" cy="94" r="7" fill="#ffffff"/>
+        <circle cx="50" cy="60" r="5.5" fill="#2b6ef0"/>
+        <circle cx="70" cy="60" r="5.5" fill="#2b6ef0"/>
+        <path d="M48 72q12 9 24 0" stroke="#2b6ef0" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </symbol>
+    </defs>
+  </svg>
+
+<script>
+  const bulb = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.2-1 2.5H9c0-1.3-.3-1.8-1-2.5A6 6 0 0 1 12 3Z" stroke="#1b54c9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  const FAQ = [
+    { id:"follow", ico:"🧭", q:"카트가 저를 안 따라와요",
+      a:`<span class="lead">카트가 따라오지 않을 때</span>
+         아래 순서대로 확인해 주세요.
+         <ol>
+           <li>카트 앞 <b>카메라 렌즈</b>에 손이나 짐이 가려지지 않았는지 확인해요.</li>
+           <li>카트와 <b>1~2m 거리</b>를 두고 정면에 서 주세요.</li>
+           <li>앱 화면에서 <b>‘추종 시작’</b>이 켜져 있는지 확인해요.</li>
+         </ol>
+         <div class="tip">${bulb}거리가 너무 멀어지면 안전을 위해 자동으로 멈춰요. 가까이 다가가면 다시 따라와요.</div>` },
+    { id:"qr", ico:"📷", q:"QR 스캔이 안 돼요",
+      a:`<span class="lead">QR 연결이 안 될 때</span>
+         <ol>
+           <li>카트 손잡이의 <b>QR 스티커</b>를 화면 안에 꽉 차게 비춰주세요.</li>
+           <li>어두우면 인식이 어려워요. <b>밝은 곳</b>에서 다시 시도해요.</li>
+           <li>QR 유효 시간은 <b>3분</b>이에요. 만료되면 <b>재발급</b>을 눌러요.</li>
+         </ol>
+         <div class="tip">${bulb}그래도 안 되면 손잡이의 카트 번호를 직접 입력해 연결할 수 있어요.</div>` },
+    { id:"pay", ico:"💳", q:"결제가 안 돼요",
+      a:`<span class="lead">결제가 진행되지 않을 때</span>
+         <ol>
+           <li>담은 상품이 <b>장바구니에 모두 인식</b>됐는지 확인해요.</li>
+           <li>등록된 <b>CartPay 카드</b>가 유효한지 확인해요.</li>
+           <li>네트워크가 불안정하면 잠시 후 <b>다시 결제</b>를 눌러주세요.</li>
+         </ol>
+         <div class="tip">${bulb}결제가 두 번 되진 않아요. 중복이 걱정되면 ‘주문내역’에서 확인할 수 있어요.</div>` },
+    { id:"stop", ico:"⛔", q:"카트가 갑자기 멈췄어요",
+      a:`<span class="lead">카트가 멈췄을 때</span>
+         대부분 <b>안전 감지 기능</b> 때문이에요.
+         <ol>
+           <li>바퀴 주변에 <b>장애물</b>이 없는지 살펴봐요.</li>
+           <li>앱에서 <b>일시 정지</b> 상태인지 확인해요.</li>
+           <li><b>추종 시작</b>을 눌러 다시 움직여요.</li>
+         </ol>
+         <div class="tip">${bulb}사람이나 물건이 가까이 오면 스스로 멈춰요. 정상적인 안전 동작이에요.</div>` },
+    { id:"return", ico:"↩️", q:"복귀 버튼을 눌렀는데 안 돌아가요",
+      a:`<span class="lead">카트가 복귀하지 않을 때</span>
+         <ol>
+           <li><b>결제가 완료</b>된 뒤에만 복귀할 수 있어요.</li>
+           <li>이동 경로에 <b>사람이 많으면</b> 잠시 기다렸다가 출발해요.</li>
+           <li>앱 상단에 <b>‘복귀 중’</b> 표시가 있는지 확인해요.</li>
+         </ol>
+         <div class="tip">${bulb}복귀는 조금 천천히 진행돼요. 1분 넘게 그대로면 매장 직원을 불러주세요.</div>` },
+    { id:"battery", ico:"🔋", q:"배터리가 부족하대요",
+      a:`<span class="lead">배터리가 부족할 때</span>
+         <ol>
+           <li>남은 쇼핑이 짧다면 <b>그대로 이용</b>해도 괜찮아요.</li>
+           <li>배터리가 매우 낮으면 <b>가까운 충전 스테이션</b>으로 안내해 드려요.</li>
+           <li>결제 후 <b>복귀</b>하면 카트가 알아서 충전하러 가요.</li>
+         </ol>
+         <div class="tip">${bulb}배터리가 20% 아래로 내려가면 앱이 미리 알려드려요.</div>` }
+  ];
+
+  // 이 WebView에서는 CSS height:100%/100vh 가 실제 뷰포트 높이로 계산되지 않아
+  // body 가 화면을 다 못 채운다. JS 로 실제 뷰포트 높이를 강제 지정한다.
+  function fitViewport(){
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight
+            || document.documentElement.clientHeight;
+    if(h){
+      document.documentElement.style.height = h + 'px';
+      document.body.style.height = h + 'px';
+    }
+  }
+  window.addEventListener('resize', fitViewport);
+  window.addEventListener('load', fitViewport);
+  if(window.visualViewport){ window.visualViewport.addEventListener('resize', fitViewport); }
+  fitViewport();
+
+  // 앱에서 넘겨준 백엔드 주소 / 토큰 / 이름
+  const P = new URLSearchParams(location.search);
+  const API_BASE = (P.get('base') || '').replace(/\/+$/, '');   // http://10.0.2.2:3000
+  const TOKEN = P.get('token') || '';
+  const USER_NAME = P.get('name') || '';
+
+  const chat  = document.getElementById('chat');
+  const chips = document.getElementById('chips');
+  let busy = false;
+  const cartIco = '<svg width="18" height="18" viewBox="0 0 120 120"><use href="#cart"/></svg>';
+
+  // 문의 내용을 백엔드로 전송
+  async function submitInquiry(text){
+    const res = await fetch(API_BASE + '/api/inquiries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+      body: JSON.stringify({ content: text, category: '앱 문의' })
+    });
+    let data = {};
+    try { data = await res.json(); } catch(e) {}
+    if(!res.ok || !data.success) throw new Error(data.message || ('HTTP ' + res.status));
+    return data;
+  }
+
+  function scrollDown(){ chat.scrollTop = chat.scrollHeight; }
+
+  function addUser(text){
+    const row = document.createElement('div');
+    row.className = 'row user';
+    row.innerHTML = `<div class="bubble">${text}</div>`;
+    chat.appendChild(row); scrollDown();
+  }
+  function addTyping(){
+    const row = document.createElement('div');
+    row.className = 'row bot'; row.id = 'typing';
+    row.innerHTML = `<div class="miniava">${cartIco}</div><div class="bubble typing"><span></span><span></span><span></span></div>`;
+    chat.appendChild(row); scrollDown();
+  }
+  function addBot(html){
+    const row = document.createElement('div');
+    row.className = 'row bot';
+    row.innerHTML = `<div class="miniava">${cartIco}</div><div class="bubble">${html}</div>`;
+    chat.appendChild(row); scrollDown();
+  }
+  function answer(item){
+    if(busy) return; busy = true;
+    addUser(item.q); addTyping();
+    setTimeout(()=>{
+      document.getElementById('typing')?.remove();
+      addBot(item.a); busy = false; renderFollowUp();
+    }, 850);
+  }
+
+  function renderMenu(){
+    chips.innerHTML = ''; chips.classList.add('fade-swap');
+    FAQ.forEach(item=>{
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.innerHTML = `<span class="ico">${item.ico}</span> ${item.q}`;
+      b.onclick = ()=>answer(item);
+      chips.appendChild(b);
+    });
+    const inq = document.createElement('button');
+    inq.className = 'chip inquiry';
+    inq.innerHTML = `<span class="ico">📝</span> 1:1 문의하기`;
+    inq.onclick = ()=>{ if(!busy) renderInquiry(); };
+    chips.appendChild(inq);
+
+    const mine = document.createElement('button');
+    mine.className = 'chip reset';
+    mine.innerHTML = `🗂️ 내 문의 내역 · 답변 보기`;
+    mine.onclick = ()=>{ if(!busy) showMyInquiries(); };
+    chips.appendChild(mine);
+
+    setTimeout(()=>chips.classList.remove('fade-swap'), 320);
+  }
+
+  const STATUS_KO = { PENDING: '답변 대기중', ANSWERED: '답변 완료' };
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // 내 문의 내역 + 관리자 답변 조회
+  async function showMyInquiries(){
+    if(busy) return; busy = true;
+    addUser('내 문의 내역을 보고 싶어요'); addTyping();
+    try {
+      const res = await fetch(API_BASE + '/api/inquiries/mine', {
+        headers: { 'Authorization': 'Bearer ' + TOKEN }
+      });
+      let data = {}; try { data = await res.json(); } catch(e){}
+      document.getElementById('typing')?.remove();
+      if(!res.ok || !data.success) throw new Error(data.message || ('HTTP ' + res.status));
+      const list = (data.data && data.data.inquiries) || [];
+      if(list.length === 0){
+        addBot(`<span class="lead">문의 내역이 없어요 🗂️</span>
+          아직 남기신 문의가 없어요. 궁금한 점이 있으면 <b>1:1 문의하기</b>로 남겨주세요!`);
+      } else {
+        list.forEach(q=>{
+          const answered = q.status === 'ANSWERED' && q.answer;
+          const badgeColor = answered ? 'var(--ok)' : '#e0a100';
+          addBot(
+            `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+               <span style="font-size:11px;font-weight:800;color:#fff;background:${badgeColor};padding:2px 9px;border-radius:999px;">${STATUS_KO[q.status]||'접수됨'}</span>
+               <span style="font-size:11.5px;color:var(--muted);">${(q.created_at||'').slice(0,10)}</span>
+             </div>
+             <b>Q.</b> ${esc(q.content)}` +
+            (answered
+              ? `<div class="tip" style="background:#eafaf1;color:#127a4b;">${cartIco2()}<div><b>A.</b> ${esc(q.answer)}</div></div>`
+              : `<div class="tip">${bulb}담당자가 확인 중이에요. 답변이 등록되면 여기에서 볼 수 있어요.</div>`)
+          );
+        });
+      }
+    } catch(e) {
+      document.getElementById('typing')?.remove();
+      addBot(`<span class="lead">내역을 불러오지 못했어요 😢</span>
+        <div class="tip">${bulb}네트워크 상태를 확인하고 다시 시도해 주세요. (${(e&&e.message)||'오류'})</div>`);
+    }
+    busy = false; renderFollowUp();
+  }
+  function cartIco2(){ return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7" stroke="#127a4b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>'; }
+
+  // 문의 입력 폼 (하단 영역을 textarea 로 교체)
+  function renderInquiry(){
+    addBot(`<span class="lead">1:1 문의하기 📝</span>
+      불편하셨던 점이나 궁금한 내용을 남겨주세요.<br/>
+      접수된 문의는 <b>관리자에게 바로 전달</b>돼요.`);
+    chips.innerHTML = '';
+    const form = document.createElement('div');
+    form.className = 'inqform';
+    form.innerHTML =
+      `<textarea id="inqText" placeholder="문의 내용을 입력해 주세요 (예: 결제 영수증을 다시 받고 싶어요)"></textarea>
+       <div class="inqrow">
+         <button class="cancel" id="inqCancel">취소</button>
+         <button class="send" id="inqSend">문의 보내기</button>
+       </div>`;
+    chips.appendChild(form);
+    const ta = document.getElementById('inqText');
+    ta.focus();
+    document.getElementById('inqCancel').onclick = ()=>{ renderMenu(); };
+    document.getElementById('inqSend').onclick = async ()=>{
+      const text = ta.value.trim();
+      if(!text){ ta.focus(); return; }
+      const sendBtn = document.getElementById('inqSend');
+      sendBtn.disabled = true; sendBtn.textContent = '보내는 중...';
+      addUser(text); addTyping();
+      try {
+        const r = await submitInquiry(text);
+        document.getElementById('typing')?.remove();
+        const num = r.data && r.data.id ? ('#' + r.data.id) : '';
+        addBot(`<span class="lead">문의가 접수되었어요! 🎉</span>
+          ${USER_NAME ? USER_NAME + '님, ' : ''}남겨주신 문의 ${num} 를 관리자에게 전달했어요.<br/>
+          확인 후 매장/앱을 통해 안내드릴게요. 감사합니다!`);
+      } catch(e) {
+        document.getElementById('typing')?.remove();
+        addBot(`<span class="lead">전송에 실패했어요 😢</span>
+          잠시 후 다시 시도해 주세요.
+          <div class="tip">${bulb}네트워크 연결을 확인해 주세요. (${(e && e.message) || '오류'})</div>`);
+      }
+      renderFollowUp();
+    };
+  }
+
+  function renderFollowUp(){
+    chips.innerHTML = ''; chips.classList.add('fade-swap');
+    const back = document.createElement('button');
+    back.className = 'chip reset';
+    back.innerHTML = `↺ 다른 문제 물어보기`;
+    back.onclick = ()=>{ addBot(`도움이 되었길 바라요! 😊 다른 궁금한 점을 골라주세요.`); renderMenu(); };
+    chips.appendChild(back);
+    setTimeout(()=>chips.classList.remove('fade-swap'), 320);
+  }
+
+  renderMenu();
+</script>
+</body>
+</html>
