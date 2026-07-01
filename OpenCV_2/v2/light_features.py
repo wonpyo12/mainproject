@@ -28,7 +28,7 @@ W_POSITION = 0.05
 MATCH_THRESHOLD    = 0.72   # 추적 시작
 KEEP_THRESHOLD     = 0.62   # 추적 유지
 REID_FLOOR         = 0.55   # ReID 하한 (미만이면 무조건 비등록자) — 0.50→0.55 강화
-COLOR_FLOOR        = 0.30   # 색상 하한
+COLOR_FLOOR        = 0.15   # 색상 하한 (0.30→0.15: ReID 신뢰도 높아 색상 게이트 완화)
 LOST_MAX           = 20     # 유실 허용 프레임
 SCORE_WINDOW       = 10     # 이동 평균 창
 MIN_CONFIRM_FRAMES = 3      # 추종 시작 전 연속 매칭 프레임
@@ -118,6 +118,15 @@ class TrackingState:
     @property
     def avg_score(self) -> float:
         return float(np.mean(list(self._history))) if self._history else 0.0
+
+    def reset(self) -> None:
+        """추적 상태 즉시 초기화 (모드 전환 등에서 잔류 추적 제거)."""
+        self.is_tracking = False
+        self.last_bbox = None
+        self.lost_count = 0
+        self._confirm = 0
+        self._history.clear()
+        self.status = "searching"
 
     def update(self, matched: bool, bbox=None, score: float = 0.0) -> None:
         if matched and bbox is not None:
