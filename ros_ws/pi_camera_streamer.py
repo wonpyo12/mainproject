@@ -2,6 +2,8 @@ import cv2
 import sys
 import time
 import threading
+import os
+import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
@@ -12,9 +14,53 @@ class CameraState:
 
 camera_state = CameraState()
 
+def speak(text):
+    """라즈베리파이에서 안내 음성(TTS)을 재생하는 함수 (백그라운드 스레드)"""
+    def run():
+        # 1단계: gTTS + pygame 시도 (자연스러운 목소리, 인터넷 필요)
+        try:
+            from gtts import gTTS
+            import pygame
+            import tempfile
+            
+            tts = gTTS(text=text, lang='ko')
+            fd, temp_path = tempfile.mkstemp(suffix='.mp3')
+            try:
+                os.close(fd)
+                tts.save(temp_path)
+                
+                pygame.mixer.init()
+                pygame.mixer.music.load(temp_path)
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
+                pygame.mixer.music.unload()
+                pygame.mixer.quit()
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            return
+        except Exception:
+            pass
+
+        # 2단계: espeak 시스템 명령어로 출력 시도 (오프라인 백업)
+        try:
+            subprocess.run(["espeak", "-v", "ko", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            pass
+
+        # 3단계: 텍스트 출력으로 대체
+        print(f"[음성 알림] {text}")
+
+    threading.Thread(target=run, daemon=True).start()
+
 class CamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/video_feed':
+            # 클라이언트 연결 감지 시 음성 출력
+            speak("촬영을 시작합니다.")
+            
             try:
                 self.send_response(200)
                 self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
@@ -49,6 +95,9 @@ class CamHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"[CamServer Error] {e}")
                     break
+            
+            # 클라이언트 연결 해제 감지 시 음성 출력
+            speak("촬영이 끝났습니다.")
         else:
             self.send_response(404)
             self.end_headers()
@@ -103,6 +152,9 @@ def main():
     finally:
         cap.release()
         print("카메라 연결이 해제되었습니다.")
+
+if __name__ == '__main__':
+    main()
 
 if __name__ == '__main__':
     main()
