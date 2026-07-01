@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class Screen {
-    SPLASH, LOGIN, SIGNUP, DASHBOARD, SHOPPING, PAYMENT, COMPLETION
+    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, SUPPORT
 }
 
 enum class TrackingState {
@@ -65,7 +65,7 @@ class CartViewModel : ViewModel() {
     // ──────────────────────────────────────────────────────
     // [파트 1] 로그인: POST /api/auth/login → JWT 저장
     // ──────────────────────────────────────────────────────
-    fun login(email: String, password: String) {
+    fun login(email: String, password: String, firstTime: Boolean = false) {
         if (email.isBlank() || password.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "이메일과 비밀번호를 입력해 주세요.")
             return
@@ -76,7 +76,8 @@ class CartViewModel : ViewModel() {
                 val response = api.login(LoginRequest(email, password))
                 if (response.success && response.token != null && response.user != null) {
                     _uiState.value = _uiState.value.copy(
-                        currentScreen = Screen.DASHBOARD,
+                        // 회원가입 직후엔 온보딩 튜토리얼을 먼저 보여준다.
+                        currentScreen = if (firstTime) Screen.ONBOARDING else Screen.DASHBOARD,
                         token = response.token,
                         userId = response.user.id,
                         userName = response.user.name,
@@ -114,8 +115,8 @@ class CartViewModel : ViewModel() {
             try {
                 val response = api.register(RegisterRequest(email, password, name, phone))
                 if (response.success) {
-                    // 가입 성공 → 자동 로그인
-                    login(email, password)
+                    // 가입 성공 → 자동 로그인 → 온보딩 튜토리얼
+                    login(email, password, firstTime = true)
                 } else {
                     _uiState.value = _uiState.value.copy(
                         errorMessage = response.message,
@@ -256,6 +257,39 @@ class CartViewModel : ViewModel() {
             else -> ""
         }
         if (msg.isNotEmpty()) showVoice(msg)
+
+        // 로봇에 실제 정지(HALT)/재개(RESUME) 신호 전송
+        when (state) {
+            TrackingState.PAUSED    -> sendRobotCommand(stop = true)
+            TrackingState.FOLLOWING -> sendRobotCommand(stop = false)
+            else -> {}
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // [로봇] 정지/재개: POST /api/robot/stop · /api/robot/resume
+    //   백엔드 → 라파 cmd_server(TCP 9998) → 터틀봇3
+    // ──────────────────────────────────────────────────────
+    private fun sendRobotCommand(stop: Boolean) {
+        val token = _uiState.value.token
+        val robotSerial = _uiState.value.robotSerialNumber
+        if (token.isBlank() || robotSerial.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val request = RobotCommandRequest(robotSerial)
+                val response = if (stop) {
+                    api.stopRobot("Bearer $token", request)
+                } else {
+                    api.resumeRobot("Bearer $token", request)
+                }
+                if (!response.success) {
+                    showVoice(response.message)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "sendRobotCommand(stop=$stop) error", e)
+                showVoice(if (stop) "로봇 정지 신호 전송에 실패했어요." else "추종 재개 신호 전송에 실패했어요.")
+            }
+        }
     }
 
     fun removeItem(item: CartItem) {
