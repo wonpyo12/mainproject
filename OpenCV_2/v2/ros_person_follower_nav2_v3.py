@@ -71,7 +71,7 @@ YOLO_ONNX_BY_SZ = {320: MODELS_DIR / "yolov8n.onnx",
                    256: MODELS_DIR / "yolov8n_256.onnx",
                    192: MODELS_DIR / "yolov8n_192.onnx"}
 
-DETECT_INTERVAL = 5      # 검출 사이 KCF 보간 프레임 수
+DETECT_INTERVAL = 8      # 검출 사이 KCF 보간 프레임 수
 KCF_MAX_AGE     = 40     # KCF 단독 보간 허용 최대 (초과 시 강제 재검출)
 
 WINDOW = "robocart v3 - Registered User Follow + Nav2"
@@ -171,7 +171,7 @@ ALLOW_REVERSE = True
 FRONT_STOP_M = 0.25      # 전방 라이다 이 거리 이내 장애물이면 전진 0 (안전)
 
 # 유실 탐색: 등록자 놓치면 제자리서 좌우 교대 저속 회전(v=0)으로 재탐색
-SEARCH_ANG         = 0.3   # 탐색 회전 각속도(rad/s)
+SEARCH_ANG         = 0.15  # 탐색 회전 각속도(rad/s)
 SEARCH_HALF_PERIOD = 3.0   # 한 방향 회전 지속(초) — 이 주기로 좌↔우 반전
 
 
@@ -648,7 +648,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                                       det["best_detail"], det["best_ori"])
             reid_ok = detail is not None and detail.get("reid", 0) >= LF.REID_FLOOR
             color_ok = detail is not None and detail.get("color", 0) >= LF.COLOR_FLOOR
-            thr = LF.KEEP_THRESHOLD if tracker.is_tracking else LF.MATCH_THRESHOLD
+            if tracker.is_tracking:
+                thr = LF.KEEP_THRESHOLD
+            elif tracker.status == "searching":
+                thr = LF.SEARCH_MATCH_THR
+            else:
+                thr = LF.MATCH_THRESHOLD
             matched = (bb is not None and total >= thr and reid_ok and color_ok)
             if matched:
                 tracker.update(True, bb, total)
@@ -717,8 +722,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                 elif draw_bbox is not None:      # 재확인(confirm) 중 → 회전 말고 정지 대기
                     v, w = 0.0, 0.0
                     follower.reset_search()
-                else:                            # [기능 3] 완전 유실 → 좌우 탐색 회전
-                    v, w = follower.search_rotate()
+                else:                            # 완전 유실 → 좌우 탐색 회전
+                    # 소프트 매치(후보 스코어 0.63↑): 회전 멈추고 confirm 기회 부여
+                    if fresh and det["best_total"] > 0.63 and det["best_bbox"] is not None:
+                        v, w = 0.0, 0.0
+                        follower.reset_search()
+                    else:
+                        v, w = follower.search_rotate()
                 if frame_count % 3 == 0:        # ≈10Hz publish (매프레임 publish 오버헤드 방지)
                     follower.send_velocity(v, w)
                 dist_mode = getattr(follower, "_dist_mode", "?")

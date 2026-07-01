@@ -26,12 +26,14 @@ W_POSITION = 0.05
 # ── 임계값 ────────────────────────────────────────────────────────────────────
 # REID_FLOOR 가 타인 차단의 핵심 하드게이트(색상과 무관하게 ReID 낮으면 즉시 탈락).
 MATCH_THRESHOLD    = 0.72   # 추적 시작
+SEARCH_MATCH_THR   = 0.70   # 완전 유실 탐색 중 재인식 임계값
 KEEP_THRESHOLD     = 0.62   # 추적 유지
 REID_FLOOR         = 0.55   # ReID 하한 (미만이면 무조건 비등록자) — 0.50→0.55 강화
 COLOR_FLOOR        = 0.15   # 색상 하한 (0.30→0.15: ReID 신뢰도 높아 색상 게이트 완화)
 LOST_MAX           = 20     # 유실 허용 프레임
 SCORE_WINDOW       = 10     # 이동 평균 창
-MIN_CONFIRM_FRAMES = 3      # 추종 시작 전 연속 매칭 프레임
+MIN_CONFIRM_FRAMES    = 3   # 추종 시작 전 연속 매칭 프레임 (일반)
+SEARCH_CONFIRM_FRAMES = 5   # 완전 유실 후 재인식 시 연속 매칭 프레임 (더 엄격)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -114,6 +116,7 @@ class TrackingState:
         self._history: collections.deque = collections.deque(maxlen=SCORE_WINDOW)
         self._confirm = 0
         self.status = "searching"
+        self._from_search = True   # 탐색 후 재인식 여부 (confirm 프레임 수 결정)
 
     @property
     def avg_score(self) -> float:
@@ -127,6 +130,7 @@ class TrackingState:
         self._confirm = 0
         self._history.clear()
         self.status = "searching"
+        self._from_search = True
 
     def update(self, matched: bool, bbox=None, score: float = 0.0) -> None:
         if matched and bbox is not None:
@@ -134,12 +138,14 @@ class TrackingState:
             self.last_bbox = bbox
             self.lost_count = 0
             if not self.is_tracking:
+                req = SEARCH_CONFIRM_FRAMES if self._from_search else MIN_CONFIRM_FRAMES
                 self._confirm += 1
-                if self._confirm >= MIN_CONFIRM_FRAMES:
+                if self._confirm >= req:
                     self.is_tracking = True
+                    self._from_search = False
                     self.status = "tracking"
                 else:
-                    self.status = f"confirm {self._confirm}/{MIN_CONFIRM_FRAMES}"
+                    self.status = f"confirm {self._confirm}/{req}"
             else:
                 self.status = "tracking"
         else:
@@ -153,6 +159,7 @@ class TrackingState:
                     self.last_bbox = None
                     self._history.clear()
                     self.status = "searching"
+                    self._from_search = True
             else:
                 self.status = "searching"
 
