@@ -11,4 +11,9 @@ router.post('/rfid', hardwareController.rfidScan);
 // 실시간 카메라 비디오 피드 프록시 (CORS/포트 오리진 이슈 우회)
 router.get('/video-feed', hardwareController.videoFeed);
 
+// [WebSocket] 로봇 실시간 위치/텔레메트리 — pose_bridge.py 가 POST, 관리자 웹이 초기값 GET
+router.post('/pose', hardwareController.updatePose);
+router.get('/pose', hardwareController.getPose);
+router.post('/telemetry', hardwareController.updateTelemetry);
+
 module.exports = router;

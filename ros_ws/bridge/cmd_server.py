@@ -26,7 +26,7 @@ import threading
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 from geometry_msgs.msg import Twist
 
 BIND = ("0.0.0.0", 9998)
@@ -38,6 +38,9 @@ class CmdServer(Node):
         self.pub_servo = self.create_publisher(String, "/robocart/servo", 10)
         self.pub_cmd = self.create_publisher(Twist, "/robocart/cmd_vel", 10)
         self.pub_return = self.create_publisher(String, "/robocart/return", 10)
+        # HJ follower 규약 토픽 — return_controller 가 구독해 Nav2 주행도 취소/재개
+        self.pub_wait = self.create_publisher(Empty, "/robocart/wait", 10)
+        self.pub_resume = self.create_publisher(Empty, "/robocart/resume", 10)
         self.halted = False   # 정지 래치 — True 면 V: 주행명령을 무시하고 0속도 유지
         threading.Thread(target=self._serve, daemon=True).start()
         self.get_logger().info(
@@ -85,14 +88,16 @@ class CmdServer(Node):
         if not line:
             return
         cmd = line.upper()
-        if cmd == "HALT":                        # 앱 정지 버튼 — 그 자리 래치 정지
+        if cmd == "HALT":                        # 앱/웹 정지 버튼 — 그 자리 래치 정지
             self.halted = True
-            self.pub_cmd.publish(Twist())        # 즉시 0속도
-            self.get_logger().info("HALT — 정지 래치 ON (주행명령 무시)")
+            self.pub_cmd.publish(Twist())        # 즉시 0속도 (추종 모드)
+            self.pub_wait.publish(Empty())       # Nav2 주행 취소 + 제동 (return_controller)
+            self.get_logger().info("HALT — 정지 래치 ON + /robocart/wait 발행")
             return
-        if cmd == "RESUME":                      # 앱 추종 시작 — 래치 해제
+        if cmd == "RESUME":                      # 앱/웹 추종 시작 — 래치 해제
             self.halted = False
-            self.get_logger().info("RESUME — 정지 래치 OFF")
+            self.pub_resume.publish(Empty())
+            self.get_logger().info("RESUME — 정지 래치 OFF + /robocart/resume 발행")
             return
         if cmd == "RETURN":                      # 앱 복귀 버튼 — SLAM 홈 복귀 트리거
             self.halted = True                   # 추종 주행 멈춰 nav2 에 /cmd_vel 양보

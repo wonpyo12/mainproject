@@ -237,6 +237,58 @@ function parseCartFromRedis(cartRaw) {
 // GET /api/hardware/video-feed
 // 실시간 카메라 MJPEG 스트림 프록시 (크래시 방지 처리)
 // ───────────────────────────────────────────────
+// ───────────────────────────────────────────────
+// 로봇 실시간 위치/텔레메트리 (라파 pose_bridge.py 가 주기 전송)
+//   POST /api/hardware/pose      : SLAM 맵 좌표 (x, y, theta)
+//   POST /api/hardware/telemetry : 배터리 % · CPU 온도 (하트비트 겸용)
+//   GET  /api/hardware/pose      : 웹 관리자 첫 렌더링용 최신 위치 조회
+// DB 없이 메모리(robotState)에만 유지 → 소켓(room:admin)으로 실시간 push
+// ───────────────────────────────────────────────
+const robotState = require('../utils/robotState');
+
+const updatePose = (req, res) => {
+  const { x, y, theta, frame, robotSerialNumber } = req.body;
+
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    return res.status(400).json({ success: false, message: 'x, y 숫자 좌표가 필요합니다.' });
+  }
+
+  robotState.state.pose = {
+    x,
+    y,
+    theta: typeof theta === 'number' ? theta : 0,
+    frame: frame || 'map',                       // 'map'(AMCL) | 'odom'(폴백)
+    robotSerialNumber: robotSerialNumber || 'ROBOT-001',
+    updatedAt: new Date().toISOString(),
+  };
+
+  // [WebSocket] 관리자 웹(매장 지도 화면)으로 실시간 push
+  const io = req.app.get('io');
+  io.to('room:admin').emit('robot:pose', robotState.state.pose);
+
+  return res.status(200).json({ success: true });
+};
+
+const getPose = (req, res) => {
+  return res.status(200).json({ success: true, pose: robotState.state.pose });
+};
+
+const updateTelemetry = (req, res) => {
+  const { battery, cpuTemp, robotSerialNumber } = req.body;
+
+  robotState.state.telemetry = {
+    battery: typeof battery === 'number' ? Math.round(battery) : null, // % (배터리 토픽 없으면 null)
+    cpuTemp: typeof cpuTemp === 'number' ? cpuTemp : null,             // ℃ (라파 SoC)
+    robotSerialNumber: robotSerialNumber || 'ROBOT-001',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const io = req.app.get('io');
+  io.to('room:admin').emit('robot:telemetry', robotState.state.telemetry);
+
+  return res.status(200).json({ success: true });
+};
+
 const videoFeed = (req, res) => {
   const proxyReq = http.request(
     {
@@ -277,4 +329,4 @@ const videoFeed = (req, res) => {
   proxyReq.end();
 };
 
-module.exports = { qrScan, rfidScan, videoFeed };
+module.exports = { qrScan, rfidScan, videoFeed, updatePose, getPose, updateTelemetry };

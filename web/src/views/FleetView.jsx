@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card } from '../components/Card';
 import { SectionHead } from '../components/SectionHead';
 import { Badge } from '../components/Badge';
@@ -7,6 +7,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { FloorMap } from './FloorMap';
 import { STATUS } from '../data';
+import { sendRobotCommand } from '../api';
 
 function RobotRow({ r, selected, onSelect }) {
   const s = STATUS[r.status] || { ko: '—', tone: 'gray' };
@@ -37,6 +38,27 @@ function RobotRow({ r, selected, onSelect }) {
 }
 
 export function FleetView({ selected, setSelected, robots = [] }) {
+  const [halted, setHalted] = useState(false);  // 긴급 정지 래치 상태 (버튼 토글용)
+  const [busy, setBusy] = useState(null);       // 전송 중인 명령
+  const [msg, setMsg] = useState(null);         // { ok, text } 전송 결과 피드백
+
+  const runCommand = async (command, confirmText) => {
+    if (busy) return;
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusy(command);
+    try {
+      const r = await sendRobotCommand(command);
+      setMsg({ ok: true, text: r.message });
+      if (command === 'HALT') setHalted(true);
+      if (command === 'RESUME') setHalted(false);
+    } catch (e) {
+      setMsg({ ok: false, text: e.message });
+    } finally {
+      setBusy(null);
+      setTimeout(() => setMsg(null), 4000);
+    }
+  };
+
   if (robots.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '90px 0', color: 'var(--text-3)' }}>
@@ -64,17 +86,40 @@ export function FleetView({ selected, setSelected, robots = [] }) {
         <SectionHead title="제어 패널" en="Control" />
         <FloorMap robots={robots} selected={selected} onSelect={setSelected} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 16 }}>
-          {[
-            ['충전소 복귀', 'battery-charging'],
-            ['긴급 정지', 'octagon-x'],
-            ['재탐색', 'scan-search'],
-            ['사용자 호출', 'megaphone']
-          ].map(([l, ic]) => (
-            <button key={l} className="ctl-btn">
-              <Icon name={ic} size={15} />{l}
-            </button>
-          ))}
+          {/* 충전소 복귀 → cmd_server RETURN (SLAM 홈 복귀) */}
+          <button
+            className="ctl-btn"
+            disabled={busy != null}
+            onClick={() => runCommand('RETURN', '로봇을 충전소(홈)로 복귀시킬까요?')}
+          >
+            <Icon name="battery-charging" size={15} />
+            {busy === 'RETURN' ? '전송 중…' : '충전소 복귀'}
+          </button>
+
+          {/* 긴급 정지 ↔ 정지 해제 토글 → cmd_server HALT / RESUME */}
+          <button
+            className="ctl-btn"
+            disabled={busy != null}
+            style={halted ? { borderColor: 'var(--red)', color: 'var(--red)' } : { color: 'var(--red)' }}
+            onClick={() => halted
+              ? runCommand('RESUME')
+              : runCommand('HALT', '로봇을 긴급 정지할까요?')}
+          >
+            <Icon name={halted ? 'play' : 'octagon-x'} size={15} />
+            {busy === 'HALT' || busy === 'RESUME' ? '전송 중…' : halted ? '정지 해제' : '긴급 정지'}
+          </button>
         </div>
+
+        {/* 명령 전송 결과 */}
+        {msg && (
+          <div style={{
+            marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+            background: msg.ok ? 'var(--green-bg)' : 'var(--red-bg)',
+            color: msg.ok ? 'var(--green)' : 'var(--red)',
+          }}>
+            {msg.text}
+          </div>
+        )}
       </Card>
     </div>
   );

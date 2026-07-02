@@ -3,33 +3,49 @@ import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { Badge } from '../components/Badge';
 import { SectionHead } from '../components/SectionHead';
+import { MAP, worldToPct } from '../mapConfig';
+import { useRobotPose } from '../hooks/useRobotPose';
 
 export function MapView() {
   const [showGrid, setShowGrid] = useState(true);
+  const { pose, live } = useRobotPose();
+
+  const marker = pose ? worldToPct(pose.x, pose.y) : null;
+  // ROS theta: x축 기준 반시계(rad) / CSS rotate: 시계방향(deg) → 부호 반전
+  const headingDeg = pose ? -(pose.theta * 180) / Math.PI : 0;
 
   const mapMetadata = [
-    { label: '맵 파일명', value: 'classroom_v3.pgm', icon: 'file-image' },
+    { label: '맵 파일명', value: 'map_classroom_final.pgm', icon: 'file-image' },
     { label: '해상도 (Resolution)', value: '0.05 m/pixel (5cm)', icon: 'zoom-in' },
-    { label: '맵 원점 (Origin)', value: 'X: -4.71, Y: -3.33', icon: 'compass' },
-    { label: '실제 크기 (Dimension)', value: '29.6m × 8.1m', icon: 'maximize-2' },
+    { label: '맵 원점 (Origin)', value: `X: ${MAP.originX}, Y: ${MAP.originY}`, icon: 'compass' },
+    { label: '실제 크기 (Dimension)', value: `${(MAP.widthPx * MAP.resolution).toFixed(2)}m × ${(MAP.heightPx * MAP.resolution).toFixed(2)}m`, icon: 'maximize-2' },
     { label: '점유 임계값', value: '65% (Occupied)', icon: 'shield-alert' },
     { label: '여유 공간 임계값', value: '25% (Free)', icon: 'shield-check' },
   ];
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 18, alignItems: 'start' }}>
-      
+      <style>{`
+        @keyframes pose-pulse {
+          0%   { transform: scale(1);   opacity: 0.55; }
+          100% { transform: scale(2.6); opacity: 0; }
+        }
+      `}</style>
+
       {/* Left Column: Live Map Viewer */}
       <Card pad={0}>
         <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700 }}>SLAM 실시간 맵 모니터</h3>
-            <Badge tone="green">ACTIVE</Badge>
+            {live
+              ? <Badge tone="green">LIVE</Badge>
+              : <Badge tone="gray">위치 수신 대기</Badge>}
+            {pose && pose.frame === 'odom' && <Badge tone="amber">ODOM 폴백</Badge>}
           </div>
-          
+
           <div style={{ display: 'flex', gap: 6 }}>
-            <button 
-              className="ctl-btn" 
+            <button
+              className="ctl-btn"
               style={{ width: 'auto', padding: '6px 10px', fontSize: 11.5, background: showGrid ? 'var(--gray-bg)' : 'transparent' }}
               onClick={() => setShowGrid(!showGrid)}
             >
@@ -40,58 +56,93 @@ export function MapView() {
         </div>
 
         <div style={{ padding: 18 }}>
-          <div style={{ 
-            position: 'relative', 
-            width: '100%', 
-            aspectRatio: '135/104', 
-            background: 'var(--surface-2)', 
-            border: '1px solid var(--border)', 
-            borderRadius: 8, 
-            overflow: 'hidden' 
+          <div style={{
+            position: 'relative',
+            aspectRatio: `${MAP.widthPx}/${MAP.heightPx}`,
+            maxHeight: 620,
+            margin: '0 auto',
+            background: 'var(--surface-2)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            overflow: 'hidden'
           }}>
             {/* SLAM Map Image */}
-            <img 
-              src="/classroom_v3.png" 
-              alt="SLAM Map" 
-              style={{ 
-                position: 'absolute', 
-                inset: 0, 
-                width: '100%', 
-                height: '100%', 
-                objectFit: 'cover', 
+            <img
+              src={MAP.image}
+              alt="SLAM Map"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                imageRendering: 'pixelated',
                 opacity: 0.95,
                 mixBlendMode: 'multiply'
-              }} 
+              }}
             />
 
-            {/* Grid Overlay */}
+            {/* Grid Overlay (1m 간격) */}
             {showGrid && (
-              <div style={{ 
-                position: 'absolute', 
-                inset: 0, 
-                backgroundImage: 'linear-gradient(var(--border) 0.5px,transparent 0.5px),linear-gradient(90deg,var(--border) 0.5px,transparent 0.5px)', 
-                backgroundSize: '10% 10%', 
-                opacity: 0.15 
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage: 'linear-gradient(var(--border) 0.5px,transparent 0.5px),linear-gradient(90deg,var(--border) 0.5px,transparent 0.5px)',
+                backgroundSize: `${(1 / (MAP.widthPx * MAP.resolution)) * 100}% ${(1 / (MAP.heightPx * MAP.resolution)) * 100}%`,
+                opacity: 0.2
               }} />
             )}
+
+            {/* Robot Marker */}
+            {marker && (
+              <div style={{
+                position: 'absolute',
+                left: `${marker.left}%`,
+                top: `${marker.top}%`,
+                width: 0,
+                height: 0,
+                transition: 'left 0.25s linear, top 0.25s linear'
+              }}>
+                {/* 펄스 링 */}
+                <div style={{
+                  position: 'absolute', left: -11, top: -11, width: 22, height: 22,
+                  borderRadius: '50%',
+                  background: live ? 'var(--green)' : 'var(--text-3)',
+                  animation: live ? 'pose-pulse 1.6s ease-out infinite' : 'none',
+                  opacity: live ? undefined : 0.25,
+                }} />
+                {/* 본체 + 진행방향 화살표 */}
+                <div style={{
+                  position: 'absolute', left: -9, top: -9, width: 18, height: 18,
+                  transform: `rotate(${headingDeg}deg)`,
+                  transition: 'transform 0.25s linear',
+                }}>
+                  <svg viewBox="0 0 18 18" width="18" height="18">
+                    <circle cx="9" cy="9" r="7" fill={live ? 'var(--green)' : 'var(--text-3)'} stroke="#fff" strokeWidth="2" />
+                    <path d="M9 4.5 L12.5 9 L9 13.5 L9 4.5" fill="#fff" transform="rotate(-90 9 9)" />
+                  </svg>
+                </div>
+              </div>
+            )}
           </div>
-          
+
           <div style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-              * SLAM 모니터에서 매핑 현황을 모니터링할 수 있습니다.
+              {pose
+                ? `로봇 위치 X: ${pose.x.toFixed(2)}m · Y: ${pose.y.toFixed(2)}m · θ: ${(pose.theta * 180 / Math.PI).toFixed(0)}° (${pose.frame})`
+                : '* 로봇 위치 수신 대기중 — pose_bridge 실행 여부를 확인하세요.'}
             </span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="icon-btn" title="확대"><Icon name="zoom-in" size={15} /></button>
-              <button className="icon-btn" title="축소"><Icon name="zoom-out" size={15} /></button>
-              <button className="icon-btn" title="초기화"><Icon name="rotate-ccw" size={15} /></button>
-            </div>
+            {pose && (
+              <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>
+                마지막 수신 {new Date(pose.updatedAt).toLocaleTimeString('ko-KR')}
+              </span>
+            )}
           </div>
         </div>
       </Card>
 
       {/* Right Column: Metadata & Controls */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        
+
         {/* Map Metadata Card */}
         <Card>
           <SectionHead title="지도 메타데이터" en="Map Info" />
@@ -110,38 +161,8 @@ export function MapView() {
           </div>
         </Card>
 
-        {/* Map Control Actions */}
-        <Card>
-          <SectionHead title="맵 제어 명령" en="SLAM Operations" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-            <button className="ctl-btn" style={{ justifyContent: 'flex-start', padding: '10px 14px' }}>
-              <Icon name="refresh-cw" size={14} style={{ color: 'var(--green)' }} />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700 }}>SLAM 맵 재스캔 및 작성</div>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 500 }}>현재 영역을 다시 레이저 스캔하여 동기화합니다.</div>
-              </div>
-            </button>
-            
-            <button className="ctl-btn" style={{ justifyContent: 'flex-start', padding: '10px 14px' }}>
-              <Icon name="save" size={14} style={{ color: 'var(--blue)' }} />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700 }}>현재 매장 지도 파일 저장</div>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 500 }}>수정된 구역 및 마크업 설정을 서버에 저장합니다.</div>
-              </div>
-            </button>
-
-            <button className="ctl-btn" style={{ justifyContent: 'flex-start', padding: '10px 14px' }}>
-              <Icon name="navigation" size={14} style={{ color: 'var(--amber)' }} />
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700 }}>수동 목표 위치(Goal) 전송</div>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 500 }}>지도를 클릭하여 지정한 좌표로 로봇을 보냅니다.</div>
-              </div>
-            </button>
-          </div>
-        </Card>
-        
       </div>
-      
+
     </div>
   );
 }
