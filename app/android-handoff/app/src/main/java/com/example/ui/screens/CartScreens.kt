@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -57,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.abs
+import kotlin.math.sin
 
 /* ============================================================
  *  CartMe · 디자인 토큰  (CartMe.dc.html 기반)
@@ -554,15 +556,29 @@ private fun LogoutChip(onClick: () -> Unit, onDark: Boolean = false) {
 }
 
 /* ============================================================
- *  ONBOARDING — 회원가입 직후 튜토리얼 (스크롤 연동 3단계)
+ *  ONBOARDING — 회원가입 직후 튜토리얼 (CartMe 튜토리얼2 · 4단계)
+ *    QR 스캔 → 정면/후면 촬영 → 인식·추종 → 결제·복귀
  *    좌우로 스크롤(스와이프)하면 각 단계가 페이드로 전환된다.
  * ============================================================ */
-private val DotIdle = Color(0xFFD7DEEA)
+private val DotIdle = Color(0xFFC4D2E8)
+
+// 튜토리얼 일러스트 전용 팔레트 (CartMe 튜토리얼2 기반)
+private val TutBlue     = Color(0xFF2B6EF0)   // 일러스트 기본 블루
+private val TutBlueDeep = Color(0xFF255FD6)
+private val TutMint     = Color(0xFF28C386)   // 스캔 빔 · 완료 체크
+private val TutMarkerBg = Color(0xFFDBE8FF)   // 사용자/홈 마커 배경
+private val TutFinder   = Color(0xFFCDDCF2)   // 뷰파인더 테두리
+private val TutVoice    = Color(0xFF7FD4FF)   // 음성 안내 포인트
+private val TutSkin     = Color(0xFFF4C9A8)
+private val TutSkinDark = Color(0xFFEAB892)
+private val TutHair     = Color(0xFF3A4661)
+private val TutHairDark = Color(0xFF2F3A52)
+private val TutFace     = Color(0xFF1F2B45)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun OnboardingScreen(onFinish: () -> Unit) {
-    val pageCount = 3
+    val pageCount = 4
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val scope = rememberCoroutineScope()
     val isLast = pagerState.currentPage == pageCount - 1
@@ -576,8 +592,24 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(Surface)) {
         Column(Modifier.fillMaxSize()) {
-            // 상단 바 · 건너뛰기
+            // 상단 바 · 진행 점 + 건너뛰기
             Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp)) {
+                Row(
+                    Modifier.align(Alignment.Center),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(pageCount) { i ->
+                        val selected = pagerState.currentPage == i
+                        val w by animateDpAsState(if (selected) 22.dp else 7.dp, label = "dotW")
+                        Box(
+                            Modifier
+                                .padding(horizontal = 3.dp)
+                                .height(6.dp).width(w)
+                                .clip(CircleShape)
+                                .background(if (selected) TutBlue else DotIdle)
+                        )
+                    }
+                }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = !isLast,
                     enter = fadeIn(), exit = fadeOut(),
@@ -585,7 +617,7 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
                 ) {
                     Text(
                         "건너뛰기",
-                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { onFinish() }
@@ -614,39 +646,31 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
                 ) {
                     when (page) {
                         0 -> OnbStepScan(active)
-                        1 -> OnbStepRecognize(active)
+                        1 -> OnbStepCapture(active)
+                        2 -> OnbStepFollow(active)
                         else -> OnbStepPay(active)
                     }
                 }
             }
 
-            // 점 인디케이터
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 18.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(pageCount) { i ->
-                    val selected = pagerState.currentPage == i
-                    val w by animateDpAsState(if (selected) 24.dp else 8.dp, label = "dotW")
-                    Box(
-                        Modifier
-                            .padding(horizontal = 4.dp)
-                            .height(8.dp).width(w)
-                            .clip(CircleShape)
-                            .background(if (selected) Blue else DotIdle)
-                    )
-                }
-            }
-
-            // 다음 / 시작하기
-            Box(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 28.dp)) {
-                PrimaryButton(
-                    text = if (isLast) "시작하기" else "다음",
-                    onClick = {
+            // 다음 / 시작하기 (마지막 단계는 네이비)
+            val btnColor by animateColorAsState(if (isLast) TutFace else TutBlue, label = "btnColor")
+            Box(
+                Modifier
+                    .padding(start = 26.dp, end = 26.dp, top = 6.dp, bottom = 28.dp)
+                    .fillMaxWidth().height(54.dp)
+                    .shadow(10.dp, RoundedCornerShape(16.dp), spotColor = btnColor.copy(alpha = 0.6f))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(btnColor)
+                    .clickable {
                         if (isLast) onFinish()
                         else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                    }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isLast) "시작하기" else "다음",
+                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -681,37 +705,33 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
 
 @Composable
 private fun OnbStepFrame(
-    art: @Composable BoxScope.() -> Unit,
     title: String,
     desc: String,
+    art: @Composable BoxScope.() -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(Modifier.size(280.dp), contentAlignment = Alignment.Center, content = art)
-        Spacer(Modifier.height(28.dp))
-        Text(title, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = Navy,
-            textAlign = TextAlign.Center, lineHeight = 30.sp, letterSpacing = (-0.4).sp)
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
+        Spacer(Modifier.height(8.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = TutFace,
+            lineHeight = 34.sp, letterSpacing = (-0.5).sp)
         Spacer(Modifier.height(12.dp))
         Text(desc, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = TextSub,
-            textAlign = TextAlign.Center, lineHeight = 22.sp)
+            lineHeight = 22.sp)
+        Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp, bottom = 10.dp), content = art)
     }
 }
 
-/* 1단계 — QR 스캔: 스캔 라인이 훑고, 끝나면 체크 팝업 */
+/* 1단계 — 키오스크 QR 스캔: 미니 폰 목업 위로 스캔 빔이 훑고, 끝나면 체크 팝업 */
 @Composable
 private fun OnbStepScan(active: Boolean) {
     var done by remember { mutableStateOf(false) }
     LaunchedEffect(active) {
-        if (active) { done = false; delay(2200); done = true } else done = false
+        if (active) { done = false; delay(2400); done = true } else done = false
     }
     val scanT = rememberInfiniteTransition(label = "scan")
-    val lineY by scanT.animateFloat(
-        initialValue = 16f, targetValue = 156f,
-        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "lineY"
+    val sweep by scanT.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Restart),
+        label = "sweep"
     )
     val checkScale by animateFloatAsState(
         targetValue = if (done) 1f else 0f,
@@ -719,50 +739,183 @@ private fun OnbStepScan(active: Boolean) {
     )
 
     OnbStepFrame(
-        art = {
+        title = "키오스크에\nQR을 스캔해요",
+        desc = "키오스크 카메라에 QR을 비추면\n카트가 배정돼요",
+    ) {
+        // CartMe 앱 QR 화면 미니 폰 목업
+        Column(
+            Modifier.align(Alignment.TopCenter).padding(top = 26.dp)
+                .width(160.dp)
+                .shadow(18.dp, RoundedCornerShape(22.dp), spotColor = TutBlue.copy(alpha = 0.35f))
+                .clip(RoundedCornerShape(22.dp))
+                .background(Surface)
+                .border(1.dp, InputBorder, RoundedCornerShape(22.dp))
+        ) {
             Box(
-                Modifier.size(190.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(Surface)
-                    .border(1.dp, InputBorder, RoundedCornerShape(28.dp)),
+                Modifier.fillMaxWidth().height(32.dp).background(TutBlue),
                 contentAlignment = Alignment.Center
             ) {
-                QrCodeImage(content = "CARTME-PAIR-ONBOARDING", size = 132.dp)
-                // 코너 가이드
-                ScanCorners()
-                // 스캔 라인
-                Box(
-                    Modifier.fillMaxWidth().padding(horizontal = 18.dp)
-                        .offset(y = (lineY - 95).dp).height(3.dp)
-                        .clip(CircleShape)
-                        .background(Brush.horizontalGradient(listOf(Color.Transparent, Blue, Color.Transparent)))
+                Text("CartMe", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Box(
+                Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                QrCodeImage(content = "CARTME-PAIR-ONBOARDING", size = 108.dp)
+                // 스캔 빔
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+                        .offset(y = (sweep * 90f - 45f).dp)
                         .alpha(if (done) 0f else 1f)
-                )
-                // 완료 체크
-                Box(
-                    Modifier.size(72.dp).scale(checkScale).clip(CircleShape).background(Green),
-                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
-                        modifier = Modifier.size(38.dp))
+                    Box(
+                        Modifier.fillMaxWidth().height(30.dp)
+                            .background(Brush.verticalGradient(listOf(
+                                TutMint.copy(alpha = 0f), TutMint.copy(alpha = 0.45f))))
+                    )
+                    Box(Modifier.fillMaxWidth().height(2.5.dp).clip(CircleShape).background(TutMint))
                 }
             }
-        },
-        title = "QR을 카트에 스캔해요",
-        desc = "카트 손잡이의 QR 코드를 비추면\n나만의 스마트 카트와 연결돼요."
+        }
+        // 배정 완료 체크
+        Box(
+            Modifier.align(Alignment.TopCenter).padding(top = 96.dp)
+                .size(56.dp).scale(checkScale)
+                .shadow(12.dp, CircleShape, spotColor = TutMint.copy(alpha = 0.6f))
+                .clip(CircleShape).background(TutMint),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                modifier = Modifier.size(30.dp))
+        }
+        // 마스코트 (왼쪽 아래에서 빼꼼)
+        Box(Modifier.align(Alignment.BottomStart)) {
+            Mascot(width = 128.dp, mood = "idle")
+        }
+    }
+}
+
+/* 2단계 — 정면/후면 촬영: 음성 안내 칩 + 뷰파인더에서 정면→플래시→후면→플래시 */
+@Composable
+private fun OnbStepCapture(active: Boolean) {
+    var frontDone by remember { mutableStateOf(false) }
+    var backDone  by remember { mutableStateOf(false) }
+    var showBack  by remember { mutableStateOf(false) }
+    val flash = remember { Animatable(0f) }
+    LaunchedEffect(active) {
+        frontDone = false; backDone = false; showBack = false; flash.snapTo(0f)
+        if (active) {
+            delay(1500)
+            flash.snapTo(1f); frontDone = true; flash.animateTo(0f, tween(400))
+            delay(350)
+            showBack = true
+            delay(1500)
+            flash.snapTo(1f); backDone = true; flash.animateTo(0f, tween(400))
+        }
+    }
+    val toBack by animateFloatAsState(
+        targetValue = if (showBack) 1f else 0f,
+        animationSpec = tween(550, easing = FastOutSlowInEasing), label = "toBack"
     )
+    // 음성 안내 웨이브 바
+    val waveT = rememberInfiniteTransition(label = "wave")
+    val wavePhase by waveT.animateFloat(
+        initialValue = 0f, targetValue = (2 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart),
+        label = "wavePhase"
+    )
+
+    OnbStepFrame(
+        title = "정면과 후면을\n차례로 촬영해요",
+        desc = "안내 음성에 따라 몸을 돌리면\n로봇이 나를 정확히 기억해요",
+    ) {
+        // 음성 안내 칩
+        Row(
+            Modifier.align(Alignment.TopCenter)
+                .shadow(8.dp, RoundedCornerShape(999.dp), spotColor = TutFace.copy(alpha = 0.4f))
+                .clip(RoundedCornerShape(999.dp))
+                .background(TutFace)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Mic, contentDescription = null, tint = TutVoice,
+                modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (toBack < 0.5f) "\"정면을 바라봐 주세요\"" else "\"뒤로 돌아봐 주세요\"",
+                fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White
+            )
+            Spacer(Modifier.width(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                repeat(4) { i ->
+                    val h = 5f + (sin(wavePhase + i * 1.3f) * 0.5f + 0.5f) * 9f
+                    Box(
+                        Modifier.padding(horizontal = 1.2.dp)
+                            .width(3.dp).height(h.dp)
+                            .clip(CircleShape).background(TutVoice)
+                    )
+                }
+            }
+        }
+
+        // 카메라 뷰파인더
+        Box(
+            Modifier.align(Alignment.TopCenter).padding(top = 48.dp)
+                .width(190.dp).height(220.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFFEEF4FD), Color(0xFFDFEAF9))))
+                .border(2.dp, TutFinder, RoundedCornerShape(26.dp))
+        ) {
+            // 인물 (정면 ↔ 후면 플립)
+            PersonFront(
+                Modifier.align(Alignment.BottomCenter)
+                    .width(118.dp).height(148.dp)
+                    .graphicsLayer {
+                        alpha = 1f - toBack
+                        scaleX = (1f - toBack).coerceAtLeast(0.02f)
+                    }
+            )
+            PersonBack(
+                Modifier.align(Alignment.BottomCenter)
+                    .width(118.dp).height(148.dp)
+                    .graphicsLayer {
+                        alpha = toBack
+                        scaleX = toBack.coerceAtLeast(0.02f)
+                    }
+            )
+            // 회전 힌트
+            Icon(
+                Icons.Filled.Refresh, contentDescription = null, tint = TutBlue,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .size(22.dp)
+                    .alpha(if (toBack > 0.05f && toBack < 0.95f) 1f else 0f)
+            )
+            // 코너 브래킷
+            ViewfinderCorners(Modifier.matchParentSize())
+            // 셔터 플래시
+            Box(Modifier.matchParentSize().alpha(flash.value).background(Color.White))
+        }
+
+        // 촬영 썸네일 (정면 · 후면)
+        Row(
+            Modifier.align(Alignment.BottomCenter),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CaptureThumb(done = frontDone)
+            CaptureThumb(done = backDone)
+        }
+    }
 }
 
 @Composable
-private fun ScanCorners() {
-    Canvas(Modifier.size(160.dp)) {
-        val s = 26f
-        val w = 5f
-        val pad = 6f
-        val c = Blue
+private fun ViewfinderCorners(modifier: Modifier) {
+    Canvas(modifier) {
+        val len = 24.dp.toPx()
+        val w = 3.dp.toPx()
+        val pad = 12.dp.toPx()
         fun corner(ox: Float, oy: Float, dx: Int, dy: Int) {
-            drawLine(c, Offset(ox, oy), Offset(ox + dx * s, oy), strokeWidth = w, cap = StrokeCap.Round)
-            drawLine(c, Offset(ox, oy), Offset(ox, oy + dy * s), strokeWidth = w, cap = StrokeCap.Round)
+            drawLine(TutBlue, Offset(ox, oy), Offset(ox + dx * len, oy), strokeWidth = w, cap = StrokeCap.Round)
+            drawLine(TutBlue, Offset(ox, oy), Offset(ox, oy + dy * len), strokeWidth = w, cap = StrokeCap.Round)
         }
         corner(pad, pad, 1, 1)
         corner(size.width - pad, pad, -1, 1)
@@ -771,12 +924,151 @@ private fun ScanCorners() {
     }
 }
 
-/* 2단계 — 사용자 인식: 펄스 링 + 경로선 + "인식 완료" 칩 */
 @Composable
-private fun OnbStepRecognize(active: Boolean) {
+private fun CaptureThumb(done: Boolean) {
+    val a by animateFloatAsState(if (done) 1f else 0.5f, label = "thumbA")
+    Box(
+        Modifier.alpha(a).size(40.dp, 48.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(Color(0xFFEEF4FD))
+            .border(2.dp, Color(0xFFD6E2F4), RoundedCornerShape(9.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (done) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = TutMint,
+                modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/* 뷰파인더 속 인물 일러스트 — 정면 (튜토리얼2 SVG 좌표계 120×150 포팅) */
+@Composable
+private fun PersonFront(modifier: Modifier) {
+    Canvas(modifier) {
+        val s = size.width / 120f
+        fun p(block: Path.() -> Unit) = Path().apply(block)
+        // 상의
+        drawPath(p {
+            moveTo(22f * s, 150f * s)
+            cubicTo(22f * s, 112f * s, 36f * s, 92f * s, 44f * s, 88f * s)
+            lineTo(76f * s, 88f * s)
+            cubicTo(84f * s, 92f * s, 98f * s, 112f * s, 98f * s, 150f * s)
+            close()
+        }, TutBlue)
+        drawPath(p {
+            moveTo(44f * s, 88f * s)
+            cubicTo(48f * s, 100f * s, 72f * s, 100f * s, 76f * s, 88f * s)
+            lineTo(76f * s, 84f * s); lineTo(44f * s, 84f * s); close()
+        }, TutBlueDeep)
+        // 카라
+        drawPath(p {
+            moveTo(50f * s, 86f * s); lineTo(60f * s, 96f * s); lineTo(70f * s, 86f * s)
+        }, TutBlueDeep, style = Stroke(width = 3f * s, cap = StrokeCap.Round))
+        // 목
+        drawPath(p {
+            moveTo(52f * s, 78f * s); lineTo(52f * s, 90f * s)
+            quadraticBezierTo(60f * s, 96f * s, 68f * s, 90f * s)
+            lineTo(68f * s, 78f * s); close()
+        }, TutSkinDark)
+        // 얼굴 · 귀
+        drawOval(TutSkinDark, topLeft = Offset(33.5f * s, 48f * s), size = Size(9f * s, 12f * s))
+        drawOval(TutSkinDark, topLeft = Offset(77.5f * s, 48f * s), size = Size(9f * s, 12f * s))
+        drawOval(TutSkin, topLeft = Offset(37f * s, 27f * s), size = Size(46f * s, 50f * s))
+        // 머리카락
+        drawPath(p {
+            moveTo(35f * s, 52f * s)
+            cubicTo(33f * s, 30f * s, 48f * s, 22f * s, 60f * s, 22f * s)
+            cubicTo(72f * s, 22f * s, 87f * s, 30f * s, 85f * s, 52f * s)
+            cubicTo(85f * s, 44f * s, 80f * s, 38f * s, 72f * s, 37f * s)
+            cubicTo(66f * s, 32f * s, 54f * s, 32f * s, 48f * s, 37f * s)
+            cubicTo(40f * s, 38f * s, 35f * s, 44f * s, 35f * s, 52f * s)
+            close()
+        }, TutHair)
+        // 눈썹
+        drawPath(p {
+            moveTo(47f * s, 47f * s); quadraticBezierTo(52f * s, 45f * s, 57f * s, 47f * s)
+        }, TutHair, style = Stroke(width = 2f * s, cap = StrokeCap.Round))
+        drawPath(p {
+            moveTo(63f * s, 47f * s); quadraticBezierTo(68f * s, 45f * s, 73f * s, 47f * s)
+        }, TutHair, style = Stroke(width = 2f * s, cap = StrokeCap.Round))
+        // 눈
+        drawCircle(TutFace, radius = 3.4f * s, center = Offset(52f * s, 53f * s))
+        drawCircle(TutFace, radius = 3.4f * s, center = Offset(68f * s, 53f * s))
+        drawCircle(Color.White, radius = 1f * s, center = Offset(53.1f * s, 52f * s))
+        drawCircle(Color.White, radius = 1f * s, center = Offset(69.1f * s, 52f * s))
+        // 볼터치
+        drawOval(Color(0xFFF4A9A0).copy(alpha = 0.55f), topLeft = Offset(42f * s, 57.4f * s), size = Size(8f * s, 5.2f * s))
+        drawOval(Color(0xFFF4A9A0).copy(alpha = 0.55f), topLeft = Offset(70f * s, 57.4f * s), size = Size(8f * s, 5.2f * s))
+        // 미소
+        drawPath(p {
+            moveTo(53f * s, 63f * s); quadraticBezierTo(60f * s, 69f * s, 67f * s, 63f * s)
+        }, TutFace, style = Stroke(width = 2.4f * s, cap = StrokeCap.Round))
+    }
+}
+
+/* 뷰파인더 속 인물 일러스트 — 후면 */
+@Composable
+private fun PersonBack(modifier: Modifier) {
+    Canvas(modifier) {
+        val s = size.width / 120f
+        fun p(block: Path.() -> Unit) = Path().apply(block)
+        // 상의 뒷면
+        drawPath(p {
+            moveTo(22f * s, 150f * s)
+            cubicTo(22f * s, 112f * s, 36f * s, 92f * s, 44f * s, 88f * s)
+            lineTo(76f * s, 88f * s)
+            cubicTo(84f * s, 92f * s, 98f * s, 112f * s, 98f * s, 150f * s)
+            close()
+        }, TutBlueDeep)
+        drawPath(p {
+            moveTo(44f * s, 88f * s)
+            cubicTo(48f * s, 96f * s, 72f * s, 96f * s, 76f * s, 88f * s)
+            lineTo(76f * s, 84f * s); lineTo(44f * s, 84f * s); close()
+        }, Color(0xFF1F52C0))
+        drawPath(p {
+            moveTo(50f * s, 87f * s); quadraticBezierTo(60f * s, 92f * s, 70f * s, 87f * s)
+        }, Color(0xFF1F52C0), style = Stroke(width = 3f * s, cap = StrokeCap.Round))
+        // 목 · 귀
+        drawPath(p {
+            moveTo(52f * s, 80f * s); lineTo(52f * s, 90f * s)
+            quadraticBezierTo(60f * s, 95f * s, 68f * s, 90f * s)
+            lineTo(68f * s, 80f * s); close()
+        }, TutSkinDark)
+        drawOval(TutSkinDark, topLeft = Offset(33.5f * s, 49f * s), size = Size(9f * s, 12f * s))
+        drawOval(TutSkinDark, topLeft = Offset(77.5f * s, 49f * s), size = Size(9f * s, 12f * s))
+        // 뒤통수
+        drawOval(TutHair, topLeft = Offset(37f * s, 27f * s), size = Size(46f * s, 50f * s))
+        drawPath(p {
+            moveTo(35f * s, 56f * s)
+            cubicTo(33f * s, 30f * s, 48f * s, 22f * s, 60f * s, 22f * s)
+            cubicTo(72f * s, 22f * s, 87f * s, 30f * s, 85f * s, 56f * s)
+            cubicTo(82f * s, 62f * s, 74f * s, 64f * s, 60f * s, 64f * s)
+            cubicTo(46f * s, 64f * s, 38f * s, 62f * s, 35f * s, 56f * s)
+            close()
+        }, TutHair)
+        // 머릿결
+        drawPath(p {
+            moveTo(48f * s, 30f * s); quadraticBezierTo(52f * s, 46f * s, 50f * s, 62f * s)
+        }, TutHairDark, style = Stroke(width = 2f * s, cap = StrokeCap.Round))
+        drawPath(p {
+            moveTo(60f * s, 28f * s); quadraticBezierTo(62f * s, 46f * s, 60f * s, 64f * s)
+        }, TutHairDark, style = Stroke(width = 2f * s, cap = StrokeCap.Round))
+        drawPath(p {
+            moveTo(72f * s, 30f * s); quadraticBezierTo(68f * s, 46f * s, 70f * s, 62f * s)
+        }, TutHairDark, style = Stroke(width = 2f * s, cap = StrokeCap.Round))
+        // 목덜미
+        drawPath(p {
+            moveTo(52f * s, 62f * s); quadraticBezierTo(60f * s, 68f * s, 68f * s, 62f * s); close()
+        }, TutHairDark)
+    }
+}
+
+/* 3단계 — 인식·추종: 펄스 링 + 점선 추종 경로 + 사용자 마커 + "인식 완료" 칩 */
+@Composable
+private fun OnbStepFollow(active: Boolean) {
     var chip by remember { mutableStateOf(false) }
     LaunchedEffect(active) {
-        if (active) { chip = false; delay(1300); chip = true } else chip = false
+        if (active) { chip = false; delay(1400); chip = true } else chip = false
     }
     val pulseT = rememberInfiniteTransition(label = "pulse")
     val phase by pulseT.animateFloat(
@@ -790,85 +1082,101 @@ private fun OnbStepRecognize(active: Boolean) {
     )
 
     OnbStepFrame(
-        art = {
-            Canvas(Modifier.fillMaxSize()) {
-                val cx = size.width / 2f
-                val cy = size.height * 0.46f
-                val base = size.minDimension * 0.16f
-                // 펄스 링 3개 (위상차)
-                for (k in 0 until 3) {
-                    val p = (phase + k / 3f) % 1f
-                    drawCircle(
-                        color = Blue.copy(alpha = (1f - p) * 0.55f),
-                        radius = base * (0.5f + p * 2.0f),
-                        center = Offset(cx, cy),
-                        style = Stroke(width = 4f)
-                    )
-                }
-                // 이동 경로선 (progress 만큼 그려짐)
-                val full = Path().apply {
-                    moveTo(size.width * 0.2f, size.height * 0.86f)
-                    cubicTo(
-                        size.width * 0.35f, size.height * 0.66f,
-                        size.width * 0.30f, size.height * 0.40f,
-                        cx, cy
-                    )
-                }
-                val pm = PathMeasure().apply { setPath(full, false) }
-                val seg = Path()
-                pm.getSegment(0f, pm.length * pathProgress, seg, true)
-                drawPath(seg, Blue, style = Stroke(width = 5f, cap = StrokeCap.Round))
-                if (pathProgress > 0.02f) {
-                    val pos = pm.getPosition(pm.length * pathProgress)
-                    drawCircle(Blue, radius = 6f, center = pos)
-                }
+        title = "카트가 나를\n알아보고 따라와요",
+        desc = "카메라로 사용자를 인식해\n자동으로 뒤따라 이동합니다",
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height * 0.42f
+            // 펄스 링 3개 (위상차)
+            for (k in 0 until 3) {
+                val p = (phase + k / 3f) % 1f
+                drawCircle(
+                    color = TutBlue.copy(alpha = (1f - p) * 0.5f),
+                    radius = size.minDimension * (0.14f + p * 0.42f),
+                    center = Offset(cx, cy),
+                    style = Stroke(width = 2.5.dp.toPx())
+                )
             }
-            Mascot(width = 140.dp, mood = "idle")
-            // 인식 완료 칩
-            androidx.compose.animation.AnimatedVisibility(
-                visible = chip,
-                enter = fadeIn() + slideInVertically { -it / 2 },
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter)
+            // 점선 추종 경로 (사용자 → 카트, progress 만큼 그려짐)
+            val full = Path().apply {
+                moveTo(size.width * 0.19f, size.height * 0.80f)
+                quadraticBezierTo(
+                    size.width * 0.56f, size.height * 0.74f,
+                    cx, cy + size.minDimension * 0.22f
+                )
+            }
+            val pm = PathMeasure().apply { setPath(full, false) }
+            val seg = Path()
+            pm.getSegment(0f, pm.length * pathProgress, seg, true)
+            drawPath(
+                seg, Color(0xFF9BBCF0),
+                style = Stroke(
+                    width = 4.dp.toPx(), cap = StrokeCap.Round,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(9.dp.toPx(), 11.dp.toPx()))
+                )
+            )
+        }
+        // 사용자 마커
+        Box(
+            Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 26.dp)
+                .size(46.dp)
+                .shadow(8.dp, CircleShape, spotColor = TutBlue.copy(alpha = 0.35f))
+                .clip(CircleShape).background(TutMarkerBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Person, contentDescription = null, tint = TutBlue,
+                modifier = Modifier.size(26.dp))
+        }
+        // 마스코트 (링 중앙)
+        Box(Modifier.align(Alignment.Center).offset(y = (-16).dp)) {
+            Mascot(width = 146.dp, mood = "idle")
+        }
+        // 인식 완료 칩
+        androidx.compose.animation.AnimatedVisibility(
+            visible = chip,
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            Row(
+                Modifier
+                    .shadow(8.dp, RoundedCornerShape(999.dp), spotColor = TutMint.copy(alpha = 0.5f))
+                    .clip(RoundedCornerShape(999.dp)).background(TutMint)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    Modifier.clip(RoundedCornerShape(999.dp)).background(Blue)
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
-                        modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("사용자 인식 완료", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
+                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                    modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("사용자 인식 완료", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
-        },
-        title = "카트가 나를 알아보고 따라와요",
-        desc = "카메라로 사용자를 인식해\n두 손 가볍게, 카트가 자동으로 따라와요."
-    )
+        }
+    }
 }
 
-/* 3단계 — 결제·복귀: 카드 슬라이드인 → 체크 → 복귀 버튼 글로우 → 카트 복귀 */
+/* 4단계 — 결제·복귀: 카드 슬라이드인 → 체크 → 복귀 버튼 글로우 → 카트가 홈으로 복귀 */
 @Composable
 private fun OnbStepPay(active: Boolean) {
     // phase: 0 대기 · 1 카드인 · 2 체크 · 3 복귀버튼 강조 · 4 카트 복귀
     var phase by remember { mutableStateOf(0) }
     LaunchedEffect(active) {
         if (active) {
-            phase = 0; delay(250); phase = 1; delay(750)
-            phase = 2; delay(750); phase = 3; delay(1100); phase = 4
+            phase = 0; delay(250); phase = 1; delay(800)
+            phase = 2; delay(700); phase = 3; delay(900); phase = 4
         } else phase = 0
     }
     val cardX by animateDpAsState(
-        if (phase >= 1) 0.dp else 180.dp,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessLow), label = "cardX"
+        if (phase >= 1) 0.dp else 230.dp,
+        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessLow), label = "cardX"
     )
+    val cardA by animateFloatAsState(if (phase >= 1) 1f else 0f, tween(350), label = "cardA")
     val checkScale by animateFloatAsState(
         if (phase >= 2) 1f else 0f,
         spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "payCheck"
     )
     val cartX by animateDpAsState(
-        if (phase >= 4) (-150).dp else 44.dp,
+        if (phase >= 4) 84.dp else 0.dp,
         animationSpec = tween(1500, easing = FastOutSlowInEasing), label = "cartX"
     )
     val glowT = rememberInfiniteTransition(label = "glow")
@@ -879,64 +1187,89 @@ private fun OnbStepPay(active: Boolean) {
     )
 
     OnbStepFrame(
-        art = {
-            // 결제 카드
-            Box(
-                Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
-                    .offset(x = cardX)
-                    .width(218.dp).height(130.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF3A86FF), Color(0xFF1B54C9))))
-                    .padding(16.dp)
-            ) {
-                Text("CartPay · 신한카드", color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Box(Modifier.align(Alignment.CenterStart).offset(y = 6.dp)
-                    .size(30.dp, 22.dp).clip(RoundedCornerShape(5.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFFFFE39A), Color(0xFFD9A93F)))))
-                Column(Modifier.align(Alignment.BottomStart)) {
-                    Text("${won(19400)}원", color = Color.White,
-                        fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
-                    Text("결제가 완료되었어요", color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                }
+        title = "여기서 바로\n결제하세요",
+        desc = "계산대 줄 없이 간단하게 쇼핑 끝!\n앱에서 상품을 확인 후 바로 결제하고,\n카트는 복귀 버튼으로 반납해요",
+    ) {
+        // 결제 카드
+        Column(
+            Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                .offset(x = cardX).alpha(cardA)
+                .width(196.dp)
+                .shadow(16.dp, RoundedCornerShape(18.dp), spotColor = TutBlue.copy(alpha = 0.55f))
+                .clip(RoundedCornerShape(18.dp))
+                .background(Brush.linearGradient(listOf(TutBlue, Color(0xFF1F5BD6))))
+                .padding(16.dp)
+        ) {
+            Text("CartPay 간편결제", color = Color.White.copy(alpha = 0.85f),
+                fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text("${won(19400)}원", color = Color.White,
+                fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(22.dp, 15.dp).clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFFFFD34D)))
+                Spacer(Modifier.width(6.dp))
+                Text("신한카드 ····3204", color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
-            // 결제 완료 체크
+        }
+        // 결제 완료 체크
+        Box(
+            Modifier.align(Alignment.TopCenter).offset(x = 84.dp, y = (-2).dp)
+                .size(48.dp).scale(checkScale)
+                .shadow(10.dp, CircleShape, spotColor = TutMint.copy(alpha = 0.6f))
+                .clip(CircleShape).background(TutMint),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
+                modifier = Modifier.size(26.dp))
+        }
+        // 홈(복귀 지점) 마커
+        Box(
+            Modifier.align(Alignment.BottomEnd).padding(bottom = 76.dp)
+                .size(50.dp).clip(RoundedCornerShape(14.dp)).background(TutMarkerBg),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Home, contentDescription = null, tint = TutBlue,
+                modifier = Modifier.size(26.dp))
+        }
+        // 홈으로 복귀하는 카트
+        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp).offset(x = cartX)) {
+            Mascot(width = 112.dp, mood = "idle")
+        }
+        // 영수증 · 복귀 버튼 (복귀 강조 글로우)
+        Row(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Box(
-                Modifier.align(Alignment.TopCenter).offset(y = 96.dp)
-                    .size(54.dp).scale(checkScale).clip(CircleShape).background(Green),
+                Modifier.weight(1f).height(46.dp)
+                    .clip(RoundedCornerShape(13.dp)).background(Color(0xFFEEF2F8)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White,
-                    modifier = Modifier.size(28.dp))
+                Text("영수증", color = Color(0xFF7C879B), fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
-            // 복귀 버튼 (강조 글로우)
             val glowing = phase >= 3
             Row(
-                Modifier.align(Alignment.Center).offset(y = 26.dp)
+                Modifier.weight(1.4f).height(46.dp)
                     .graphicsLayer {
-                        if (glowing) { val s = 1f + 0.05f * glow; scaleX = s; scaleY = s }
+                        if (glowing) { val sc = 1f + 0.04f * glow; scaleX = sc; scaleY = sc }
                     }
-                    .shadow(if (glowing) (8 + 12 * glow).dp else 0.dp, RoundedCornerShape(14.dp),
-                        ambientColor = Blue, spotColor = Blue)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Blue)
-                    .padding(horizontal = 22.dp, vertical = 12.dp),
+                    .shadow(if (glowing) (6 + 10 * glow).dp else 0.dp, RoundedCornerShape(13.dp),
+                        ambientColor = TutBlue, spotColor = TutBlue)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(TutBlue),
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.KeyboardReturn, contentDescription = null, tint = Color.White,
+                Icon(Icons.Filled.Home, contentDescription = null, tint = Color.White,
                     modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("제자리로 복귀", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(6.dp))
+                Text("복귀", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
-            // 복귀하는 카트
-            Box(Modifier.align(Alignment.BottomCenter).offset(x = cartX)) {
-                Mascot(width = 92.dp, mood = "idle")
-            }
-        },
-        title = "결제하면 카트가 스스로 복귀해요",
-        desc = "CartPay로 간편하게 결제하고\n복귀 버튼만 누르면 제자리로 돌아가요."
-    )
+        }
+    }
 }
 
 /* ============================================================
@@ -956,7 +1289,7 @@ private fun SplashScreen(onDone: () -> Unit) {
             .size(220.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f)))
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("CartMe", fontSize = 56.sp, fontWeight = FontWeight.Black, color = Color.White,
+            Text("로봇 카트", fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color.White,
                 letterSpacing = (-1).sp)
             Spacer(Modifier.height(8.dp))
             Text("스마트 카트로 더 가벼운 장보기", fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
