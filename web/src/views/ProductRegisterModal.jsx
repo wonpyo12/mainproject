@@ -3,7 +3,7 @@ import { Icon } from '../components/Icon';
 import { io } from 'socket.io-client';
 
 // 백엔드 주소 (개발 시 로컬, 배포 시 서버 IP로 변경)
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 
 
 const CATEGORIES = ['과일', '채소', '음료', '유제품', '육류', '베이커리', '냉동식품', '기타'];

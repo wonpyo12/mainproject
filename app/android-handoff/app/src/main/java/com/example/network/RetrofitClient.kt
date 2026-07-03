@@ -8,9 +8,8 @@ import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
 
-    // 에뮬레이터: 10.0.2.2 = 호스트 PC의 localhost
-    // 실기기 테스트 시: 호스트 PC의 실제 IP로 변경 (예: "http://192.168.0.x:3000/")
-    const val BASE_URL = "http://10.0.2.2:3000/"
+    // 실기기 테스트 시: 호스트 PC의 실제 IP로 변경
+    const val BASE_URL = "http://192.168.0.22:3000/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

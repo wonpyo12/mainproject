@@ -207,7 +207,13 @@ if _ROS2_OK:
             self.start_yaw = 0.0
             self.has_start_pose = False
 
-            self.state = "FOLLOW"          # FOLLOW / RETURN / IDLE
+            # 백엔드/앱 연동 제어 명령 구독
+            from std_msgs.msg import Empty, String
+            self.create_subscription(Empty, "/robocart/wait", self._wait_cb, 10)
+            self.create_subscription(Empty, "/robocart/resume", self._resume_cb, 10)
+            self.create_subscription(String, "/robocart/return", self._return_cb, 10)
+
+            self.state = "STOPPED"          # FOLLOW / RETURN / STOPPED
             self.last_v = 0.0
             self.last_w = 0.0
             self.last_dist_cm = 0.0
@@ -215,8 +221,35 @@ if _ROS2_OK:
             self._nav_goal_handle = None   # 진행 중 Nav2 목표 핸들(취소용)
             self.get_logger().info(f"RobotController v3 준비 (FOLLOW + Nav2 RETURN). ESP_IP: {self.esp_ip}")
             
-            # 구동 시작 시 대기 상태(노란불)로 초기화
-            set_robot_led(self.esp_ip, "STANDBY")
+            # 구동 시작 시 정지 상태(빨간불)로 대기
+            set_robot_led(self.esp_ip, "STOPPED")
+
+        # ── 앱/웹 제어 토픽 구독 콜백 ──
+        def _wait_cb(self, msg):
+            self.cancel_nav()
+            self.state = "STOPPED"
+            self.send_stop()
+            set_robot_led(self.esp_ip, "STOPPED")
+            self.get_logger().info("[Cmd] 앱/웹 정지(HALT) 명령 수신 -> STOPPED 상태 전환. LED 빨간불.")
+
+        def _resume_cb(self, msg):
+            if self.state != "FOLLOW":
+                self.cancel_nav()
+                self.state = "FOLLOW"
+                self.send_stop()
+                set_robot_led(self.esp_ip, "STANDBY")
+                self.get_logger().info("[Cmd] 앱/웹 시작(RESUME) 명령 수신 -> FOLLOW 상태 전환. LED 노란불.")
+
+        def _return_cb(self, msg):
+            if msg.data == "RETURN_HOME":
+                if self.state != "RETURN":
+                    self.state = "RETURN"
+                    self.send_stop()
+                    set_robot_led(self.esp_ip, "RUNNING")
+                    if not self.has_start_pose:
+                        self.get_logger().warn("AMCL 시작 위치 미저장 → (0,0) 복귀 시도.")
+                    self.send_nav_goal(self.start_x, self.start_y, self.start_yaw)
+                    self.get_logger().info("[Cmd] 앱/웹 복귀(RETURN) 명령 수신 -> RETURN 상태 전환. LED 초록불.")
 
         # ── 구독 콜백 ──
         def _amcl_cb(self, msg):

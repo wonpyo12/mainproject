@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 const STALE_MS = 4000; // 이 시간 동안 pose 없으면 신호 끊김 처리
 
 // 로봇 실시간 위치 구독 훅 — 매장 지도 / 대시보드 공용
