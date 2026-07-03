@@ -213,7 +213,10 @@ if _ROS2_OK:
             self.last_dist_cm = 0.0
             self._search_start = None      # 유실 탐색 회전 시작 시각
             self._nav_goal_handle = None   # 진행 중 Nav2 목표 핸들(취소용)
-            self.get_logger().info("RobotController v3 준비 (FOLLOW + Nav2 RETURN).")
+            self.get_logger().info(f"RobotController v3 준비 (FOLLOW + Nav2 RETURN). ESP_IP: {self.esp_ip}")
+            
+            # 구동 시작 시 대기 상태(노란불)로 초기화
+            set_robot_led(self.esp_ip, "STANDBY")
 
         # ── 구독 콜백 ──
         def _amcl_cb(self, msg):
@@ -311,10 +314,6 @@ if _ROS2_OK:
             if v > 0 and self.front_blocked():       # 안전: 전방 막히면 전진 취소
                 v = 0.0
             self.publish(v, w)
-            
-            # LED 제어 (운행 중이면 RUNNING, 정지 중이면 STANDBY)
-            led_status = "RUNNING" if (v != 0.0 or w != 0.0) else "STANDBY"
-            set_robot_led(self.esp_ip, led_status)
 
         def publish(self, v, w):
             v = _clamp(float(v), -BURGER_MAX_LIN, BURGER_MAX_LIN)
@@ -422,25 +421,30 @@ def load_profile():
 def speak_on_pi(pi_ip, text):
     if not pi_ip:
         return
-    try:
-        import urllib.parse
-        import urllib.request
-        encoded_text = urllib.parse.quote(text)
-        url = f"http://{pi_ip}:5000/speak?text={encoded_text}"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=1.0) as response:
-            pass
-    except Exception as e:
-        print(f"[speak_on_pi] 소리 출력 실패: {e}")
+    def run():
+        try:
+            import urllib.parse
+            import urllib.request
+            encoded_text = urllib.parse.quote(text)
+            url = f"http://{pi_ip}:5000/speak?text={encoded_text}"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=1.5) as response:
+                pass
+        except Exception as e:
+            print(f"[speak_on_pi] 소리 출력 실패: {e}")
+            
+    import threading
+    threading.Thread(target=run, daemon=True).start()
 
 
 last_led_status = None
 
-def set_robot_led(esp_ip, status):
+def set_robot_led(esp_ip, status, blocking=False):
     global last_led_status
     if not esp_ip or status == last_led_status:
         return
     last_led_status = status
+    print(f"[set_robot_led] 아두이노({esp_ip})로 LED 상태 변경 전송: {status}")
     
     def run():
         try:
@@ -448,13 +452,16 @@ def set_robot_led(esp_ip, status):
             import urllib.parse
             url = f"http://{esp_ip}/led?status={status}"
             req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=1.0) as response:
+            with urllib.request.urlopen(req, timeout=1.5) as response:
                 pass
         except Exception as e:
             print(f"[set_robot_led] LED 제어 실패 ({status}): {e}")
             
-    import threading
-    threading.Thread(target=run, daemon=True).start()
+    if blocking:
+        run()
+    else:
+        import threading
+        threading.Thread(target=run, daemon=True).start()
 
 
 def _show(frame):
@@ -778,6 +785,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                         follower.reset_search()
                     else:
                         v, w = follower.search_rotate()
+                
+                # 사람이 인식되면 초록불(RUNNING), 인식되지 않으면(유실/재확인 포함) 즉시 노란불(STANDBY)
+                if draw_bbox is not None:
+                    set_robot_led(follower.esp_ip, "RUNNING")
+                else:
+                    set_robot_led(follower.esp_ip, "STANDBY")
+                    
                 if frame_count % 3 == 0:        # ≈10Hz publish (매프레임 publish 오버헤드 방지)
                     follower.send_velocity(v, w)
                 dist_mode = getattr(follower, "_dist_mode", "?")
@@ -787,6 +801,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
             else:  # RETURN / IDLE — Nav2 가 /cmd_vel 통제
                 cv2.putText(frame, f"[{follower.state}] Nav2 controlling. type '추종' to follow.",
                             (6, h_f - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1)
+                
+                # Nav2 복귀 동작 중에는 초록불(RUNNING)
+                if follower.state == "RETURN":
+                    set_robot_led(follower.esp_ip, "RUNNING")
+                elif follower.state == "STOPPED":
+                    set_robot_led(follower.esp_ip, "STOPPED")
 
         cv2.imshow(WINDOW, frame)
         if (cv2.waitKey(1) & 0xFF) == ord("q"):
@@ -839,7 +859,7 @@ def console_input_thread(follower):
 
 def parse_args():
     p = argparse.ArgumentParser(description="등록 사용자 추종 + Nav2 복귀 (분산)")
-    p.add_argument("--pi-ip", default="192.168.0.25", help="라즈베리파이 IP (MJPEG :5000)")
+    p.add_argument("--pi-ip", default="192.168.0.29", help="라즈베리파이 IP (MJPEG :5000)")
     p.add_argument("--esp-ip", default=None, help="ESP8266 (RFID & LED) IP 주소 (예: 192.168.0.xx)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
@@ -907,6 +927,7 @@ def main() -> int:
         print("\n[종료]")
     finally:
         if follower is not None:
+            set_robot_led(follower.esp_ip, "STOPPED", blocking=True)
             follower.send_stop()
             follower.destroy_node()
             if rclpy.ok():

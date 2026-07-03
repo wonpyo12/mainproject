@@ -11,7 +11,7 @@
 // ── LED 핀 설정 ──────────────────────────────────
 #define LED_RED D1      // 정지 상태 (빨간불)
 #define LED_YELLOW D2   // 대기 상태 (노란불)
-#define LED_GREEN D5    // 운행 상태 (초록불)
+#define LED_GREEN D0    // 운행 상태 (초록불) - D0 일반 핀으로 변경 (D5 RFID SCK 핀 충돌 방지)
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 ESP8266WebServer server(80);
@@ -21,7 +21,7 @@ const char* ssid     = "test1111";
 const char* password = "12345678";
 
 // ── 서버 URL 설정 (RFID 태그 전송용) ───────────────
-const char* serverURL = "http://192.168.0.20:3000/api/hardware/rfid";
+const char* serverURL = "http://192.168.0.22:3000/api/hardware/rfid";
 const char* robotSerialNumber = "CartMe-ROS2-08";
 
 // 동일 카드 연속 스캔 방지 (디바운스) 변수
@@ -29,24 +29,24 @@ String lastUid = "";
 unsigned long lastScanTime = 0;
 const unsigned long debounceDelay = 5000; // 5초 이내 동일 카드 무시
 
-// LED 상태 제어 핸들러
+// LED 상태 제어 핸들러 (모든 LED가 HIGH일 때 켜지는 표준 Active-HIGH 상태)
 void handleLED() {
   if (server.hasArg("status")) {
     String status = server.arg("status");
     Serial.println("LED 상태 변경 요청: " + status);
     
     if (status == "RUNNING") {
-      digitalWrite(LED_GREEN, HIGH);
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_GREEN, HIGH);  // 초록불 켬
+      digitalWrite(LED_YELLOW, LOW);   // 노란불 끔
+      digitalWrite(LED_RED, LOW);      // 빨간불 끔
     } else if (status == "STANDBY") {
-      digitalWrite(LED_GREEN, LOW);
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_GREEN, LOW);   // 초록불 끔
+      digitalWrite(LED_YELLOW, HIGH);  // 노란불 켬
+      digitalWrite(LED_RED, LOW);      // 빨간불 끔
     } else if (status == "STOPPED") {
-      digitalWrite(LED_GREEN, LOW);
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_RED, HIGH);
+      digitalWrite(LED_GREEN, LOW);   // 초록불 끔
+      digitalWrite(LED_YELLOW, LOW);   // 노란불 끔
+      digitalWrite(LED_RED, HIGH);     // 빨간불 켬
     }
     server.send(200, "text/plain", "OK");
   } else {
@@ -84,9 +84,9 @@ void setup() {
   Serial.print("연결 완료 - IP: ");
   Serial.println(WiFi.localIP());
 
-  // 와이파이 연결 성공 시: 대기(노란불) 상태로 변경
-  digitalWrite(LED_RED, LOW);
-  digitalWrite(LED_YELLOW, HIGH);
+  // 와이파이 연결 성공 시: VM 구동 전이므로 빨간불(정지/대기) 상태 유지
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_YELLOW, LOW);
   digitalWrite(LED_GREEN, LOW);
 
   // HTTP LED 제어 경로 등록
@@ -153,9 +153,9 @@ void loop() {
         Serial.println(http.getString());
       }
     } else {
-      Serial.print("전송 실패 코드: ");
+      Serial.print("trans error code: ");
       Serial.println(httpCode);
-      Serial.print("전송 실패 메시지: ");
+      Serial.print("trans error message: ");
       Serial.println(http.errorToString(httpCode));
     }
 

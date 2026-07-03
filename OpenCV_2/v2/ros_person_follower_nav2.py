@@ -367,7 +367,7 @@ def main():
     input_thread.start()
 
     # ── 카메라 소스 설정 ──
-    PI_IP = "192.168.0.25"
+    PI_IP = "192.168.0.29"
     stream_url = f"http://{PI_IP}:5000/video_feed"
     
     print(f"[연동] 카메라 스트림 연결 중: {stream_url}")
