@@ -1,23 +1,27 @@
-
 #include <SPI.h>
 #include <MFRC522.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <ESP8266WebServer.h>
 
 #define SS_PIN D8
 #define RST_PIN D3
 
+// ── LED 핀 설정 ──────────────────────────────────
+#define LED_RED D1      // 정지 상태 (빨간불)
+#define LED_YELLOW D2   // 대기 상태 (노란불)
+#define LED_GREEN D5    // 운행 상태 (초록불)
+
 MFRC522 rfid(SS_PIN, RST_PIN);
+ESP8266WebServer server(80);
 
 // ── Wi-Fi 설정 ──────────────────────────────────
-const char* ssid     = "5층";
-const char* password = "48864886";
+const char* ssid     = "test1111";
+const char* password = "12345678";
 
-// ── 서버 URL 설정 ───────────────────────────────
-// PC의 로컬 IP로 변경하세요 (예: 192.168.0.10)
-// cmd에서 ipconfig 실행 후 IPv4 주소 확인
-const char* serverURL = "http://192.168.0.66:3000/api/hardware/rfid";
+// ── 서버 URL 설정 (RFID 태그 전송용) ───────────────
+const char* serverURL = "http://192.168.0.20:3000/api/hardware/rfid";
 const char* robotSerialNumber = "CartMe-ROS2-08";
 
 // 동일 카드 연속 스캔 방지 (디바운스) 변수
@@ -25,10 +29,45 @@ String lastUid = "";
 unsigned long lastScanTime = 0;
 const unsigned long debounceDelay = 5000; // 5초 이내 동일 카드 무시
 
+// LED 상태 제어 핸들러
+void handleLED() {
+  if (server.hasArg("status")) {
+    String status = server.arg("status");
+    Serial.println("LED 상태 변경 요청: " + status);
+    
+    if (status == "RUNNING") {
+      digitalWrite(LED_GREEN, HIGH);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_RED, LOW);
+    } else if (status == "STANDBY") {
+      digitalWrite(LED_GREEN, LOW);
+      digitalWrite(LED_YELLOW, HIGH);
+      digitalWrite(LED_RED, LOW);
+    } else if (status == "STOPPED") {
+      digitalWrite(LED_GREEN, LOW);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_RED, HIGH);
+    }
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Missing status parameter");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   SPI.begin();
   rfid.PCD_Init();
+
+  // LED 핀 출력 설정
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+
+  // 초기 상태: 와이파이 연결 전 빨간불 켬
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_GREEN, LOW);
 
   Serial.println();
   Serial.print("와이파이 연결중");
@@ -37,14 +76,34 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    // 와이파이 연결 시도 중에는 노란불 깜빡임 효과
+    digitalWrite(LED_YELLOW, !digitalRead(LED_YELLOW));
   }
 
   Serial.println("");
   Serial.print("연결 완료 - IP: ");
   Serial.println(WiFi.localIP());
+
+  // 와이파이 연결 성공 시: 대기(노란불) 상태로 변경
+  digitalWrite(LED_RED, LOW);
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_GREEN, LOW);
+
+  // HTTP LED 제어 경로 등록
+  server.on("/led", handleLED);
+  server.begin();
+  Serial.println("HTTP LED 제어 서버 시작됨");
 }
 
 void loop() {
+  // 웹 서버 요청 처리 (비블로킹)
+  server.handleClient();
+
+  // 스캔 간격 제한 (2초 이내 재스캔 방지, delay 제거로 서버 응답속도 보장)
+  if (millis() - lastScanTime < 2000) {
+    return;
+  }
+
   // 새 카드 감지 확인
   if (!rfid.PICC_IsNewCardPresent()) return;
   if (!rfid.PICC_ReadCardSerial())   return;
@@ -77,7 +136,6 @@ void loop() {
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
-    // JSON 바디: { "rfidTag": "XXXXXXXX", "robotSerialNumber": "CartMe-ROS2-08" }
     String body = "{\"rfidTag\":\"" + uidStr + "\",\"robotSerialNumber\":\"" + robotSerialNumber + "\"}";
 
     Serial.print("요청 URL: ");
@@ -110,6 +168,4 @@ void loop() {
   // 카드 정지 (중복 읽기 방지)
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
-
-  delay(2000); // 2초 대기 후 다음 스캔
 }

@@ -7,6 +7,9 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
+# 서버 종료 감지를 위한 전역 플래그
+IS_RUNNING = True
+
 # 스트리밍을 위한 카메라 프레임 공유 클래스
 class CameraState:
     def __init__(self):
@@ -14,13 +17,25 @@ class CameraState:
 
 camera_state = CameraState()
 
-def speak(text):
+# 동일 문장 중복 재생 방지를 위한 쿨타임 사전
+last_spoken_time = {}
+
+def speak(text, cooldown=5.0):
     """라즈베리파이에서 안내 음성(TTS)을 재생하는 함수 (백그라운드 스레드)"""
+    if not IS_RUNNING:
+        return
+        
+    # 동일한 내용이 5초 이내에 또 호출되면 중복 재생 방지
+    current_time = time.time()
+    if text in last_spoken_time:
+        if current_time - last_spoken_time[text] < cooldown:
+            return
+    last_spoken_time[text] = current_time
+
     def run():
-        # 1단계: gTTS + pygame 시도 (자연스러운 목소리, 인터넷 필요)
+        # 1단계: gTTS + mpg123 시도 (pygame C-level 스레드 크래시 방지용 외부 재생)
         try:
             from gtts import gTTS
-            import pygame
             import tempfile
             
             tts = gTTS(text=text, lang='ko')
@@ -29,13 +44,11 @@ def speak(text):
                 os.close(fd)
                 tts.save(temp_path)
                 
-                pygame.mixer.init()
-                pygame.mixer.music.load(temp_path)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy():
-                    time.sleep(0.1)
-                pygame.mixer.music.unload()
-                pygame.mixer.quit()
+                # -b 1024 버퍼 옵션을 추가하여 CPU 부하 시 음이 툭툭 끊기거나 깨지는 현상을 방지합니다.
+                res = subprocess.run(["mpg123", "-q", "-b", "1024", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if res.returncode != 0:
+                    # mpg123 실패 시 (설치가 안 되어 있는 등) 예외를 발생시켜 다음 단계(espeak)로 진입
+                    raise RuntimeWarning("mpg123 execution failed")
             finally:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
@@ -57,10 +70,10 @@ def speak(text):
 
 class CamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/video_feed':
-            # 클라이언트 연결 감지 시 음성 출력
-            speak("촬영을 시작합니다.")
-            
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(self.path)
+        
+        if parsed_url.path == '/video_feed':
             try:
                 self.send_response(200)
                 self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
@@ -96,11 +109,32 @@ class CamHandler(BaseHTTPRequestHandler):
                     print(f"[CamServer Error] {e}")
                     break
             
-            # 클라이언트 연결 해제 감지 시 음성 출력
-            speak("촬영이 끝났습니다.")
+        elif parsed_url.path == '/speak':
+            query = parse_qs(parsed_url.query)
+            text = query.get('text', [None])[0]
+            if text:
+                speak(text)
+                try:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/plain; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write("OK".encode('utf-8'))
+                except Exception as e:
+                    print(f"[CamServer Speak Response Error] {e}")
+            else:
+                try:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write("Missing text parameter".encode('utf-8'))
+                except Exception:
+                    pass
         else:
-            self.send_response(404)
-            self.end_headers()
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
 
     def log_message(self, format, *args):
         return
@@ -149,12 +183,11 @@ def main():
             # cap.read() 자체가 카메라 프레임레이트(30fps)에 맞춰 대기하므로 추가 sleep 제거로 지연 최소화
     except KeyboardInterrupt:
         print("\n스트리머 종료 중...")
+        global IS_RUNNING
+        IS_RUNNING = False
     finally:
         cap.release()
         print("카메라 연결이 해제되었습니다.")
-
-if __name__ == '__main__':
-    main()
 
 if __name__ == '__main__':
     main()
