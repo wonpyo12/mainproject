@@ -99,6 +99,17 @@ const completeOrder = async (req, res) => {
       completedAt: new Date().toISOString(),
     });
 
+    // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 종료 push — 결제 완료 → 복귀
+    io.to('room:admin').emit('session:update', {
+      robotSerialNumber,
+      status: 'RETURNING',
+      user: null,
+      items: [],
+      totalAmount: 0,
+      orderTotal: totalPrice,
+      updatedAt: new Date().toISOString(),
+    });
+
     return res.status(200).json({
       success: true,
       message: '결제가 완료되었습니다.',

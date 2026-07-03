@@ -25,7 +25,7 @@ const getDashboard = async (req, res) => {
     const { pose, telemetry } = robotState.state;
     // pose/telemetry 를 보내는 실물 카트의 시리얼 (라파 pose_bridge 설정과 일치)
     const liveSerial = (pose && pose.robotSerialNumber)
-      || (telemetry && telemetry.robotSerialNumber) || 'ROBOT-001';
+      || (telemetry && telemetry.robotSerialNumber) || 'CartMe-ROS2-08';
 
     // ── 로봇 플릿: 등록 로봇(robots 테이블) + 실시간 상태 결합 ──
     const [robotRows] = await pool.query(
@@ -42,6 +42,7 @@ const getDashboard = async (req, res) => {
 
       // 매칭된 이용자 이름 + 장바구니 (SHOPPING 세션일 때만)
       let userName = null, userEmail = null, items = 0, amount = 0;
+      let cartItems = [];
       const uid = statusHash && statusHash.userId ? statusHash.userId : null;
       if (uid) {
         const [urows] = await pool.query('SELECT name, email FROM users WHERE id = ?', [uid]);
@@ -49,21 +50,21 @@ const getDashboard = async (req, res) => {
           userName  = urows[0].name;
           userEmail = urows[0].email;
         }
+        // Redis 평탄화 해시 → [{ name, price, qty }] (카메라 모니터링 초기 표시용)
         const cartRaw = await redis.hgetall(`cart:${uid}:${serial}`);
-        for (const [field, value] of Object.entries(cartRaw || {})) {
-          if (field.endsWith('_qty'))   items  += Number(value);
-        }
-        // 금액은 qty × price 합
         const byId = {};
         for (const [field, value] of Object.entries(cartRaw || {})) {
           const idx = field.indexOf('_');
           const pid = field.substring(0, idx);
           const attr = field.substring(idx + 1);
-          if (!byId[pid]) byId[pid] = {};
-          byId[pid][attr] = value;
+          if (!byId[pid]) byId[pid] = { productId: Number(pid) };
+          if (attr === 'name')  byId[pid].name  = value;
+          if (attr === 'price') byId[pid].price = Number(value);
+          if (attr === 'qty')   byId[pid].qty   = Number(value);
         }
-        amount = Object.values(byId)
-          .reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
+        cartItems = Object.values(byId);
+        items  = cartItems.reduce((s, it) => s + (it.qty || 0), 0);
+        amount = cartItems.reduce((s, it) => s + (it.price || 0) * (it.qty || 0), 0);
       }
 
       robots.push({
@@ -81,6 +82,8 @@ const getDashboard = async (req, res) => {
         y: isLive && pose ? pose.y : null,
         items,
         amount,
+        cartItems,
+        sessionStatus: redisStatus || null,   // SHOPPING | RETURNING | null
       });
     }
 

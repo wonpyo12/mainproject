@@ -1,9 +1,14 @@
+import sys
 import cv2
 import requests
 import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+
+# 윈도우 cp949 콘솔에서 한글/특수문자 print 크래시 방지
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # 스트리밍을 위한 카메라 프레임 공유 클래스
 class CameraState:
@@ -30,7 +35,11 @@ class CamHandler(BaseHTTPRequestHandler):
                     time.sleep(0.03)
                     continue
                 try:
-                    ret, jpeg = cv2.imencode('.jpg', img_frame)
+                    # 스트림용은 640폭으로 줄여 인코딩 (대역폭·CPU 절약, 원본 화질은 유지)
+                    if img_frame.shape[1] > 640:
+                        scale = 640 / img_frame.shape[1]
+                        img_frame = cv2.resize(img_frame, (640, int(img_frame.shape[0] * scale)))
+                    ret, jpeg = cv2.imencode('.jpg', img_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
                     if not ret:
                         time.sleep(0.01)
                         continue
@@ -85,7 +94,32 @@ SERVER_URL = "http://localhost:3000/api/hardware/qr-scan"
 ROBOT_SERIAL = "CartMe-ROS2-08"
 
 # 웹캠 초기화 (0번 기본 카메라)
-cap = cv2.VideoCapture(0)
+# CAP_DSHOW: 윈도우 MSMF 백엔드의 초기화 지연·랙 회피 / MJPG + 720p 로 화질·프레임 확보
+# 카메라 프로파일: 720p MJPG 우선, 끊기면 640x480 기본 모드로 강등
+CAM_PROFILES = [
+    {"name": "1280x720 MJPG", "w": 1280, "h": 720, "mjpg": True},
+    {"name": "640x480 기본",   "w": 640,  "h": 480, "mjpg": False},
+]
+cam_profile = 0  # 현재 프로파일 인덱스 (실패 누적 시 다음 프로파일로)
+
+
+def open_camera():
+    p = CAM_PROFILES[cam_profile]
+    c = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if p["mjpg"]:
+        c.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    c.set(cv2.CAP_PROP_FRAME_WIDTH, p["w"])
+    c.set(cv2.CAP_PROP_FRAME_HEIGHT, p["h"])
+    c.set(cv2.CAP_PROP_FPS, 30)
+    c.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 오래된 프레임 버퍼링으로 인한 지연 방지
+    # 실제 프레임이 나오는지 테스트 (모드는 열리는데 read 가 실패하는 캠이 있음)
+    ok = c.isOpened() and c.read()[0]
+    if ok:
+        print(f"[카메라] {p['name']} → {int(c.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(c.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+    return c
+
+
+cap = open_camera()
 if not cap.isOpened():
     print("[Error] 카메라를 열 수 없습니다. 웹캠 연결을 확인하세요.")
     exit()
@@ -107,79 +141,104 @@ status_text = "Scan QR Code on App"
 status_color = (255, 255, 0)  # 하늘색/노란색 (BGR)
 last_scanned_token = ""
 status_timer = 0  # 상태 메시지 표시 타이머
+frame_no = 0
+state_lock = threading.Lock()
 
+
+def send_auth(token):
+    """백엔드 인증 POST — 영상 루프를 막지 않게 별도 스레드에서 실행"""
+    global auth_status, status_text, status_color, status_timer
+    try:
+        response = requests.post(
+            SERVER_URL,
+            json={"qrToken": token, "robotSerialNumber": ROBOT_SERIAL},
+            timeout=3)
+        res_json = response.json()
+        with state_lock:
+            if response.status_code == 200 and res_json.get("success"):
+                print(f"[성공] 인증 완료! 유저 ID: {res_json.get('userId')}와 매칭되었습니다.")
+                auth_status = "SUCCESS"
+                status_text = f"SUCCESS: Matched with User {res_json.get('userId')}"
+                status_color = (0, 255, 0)
+            else:
+                print(f"[실패] 백엔드 응답 에러: {res_json.get('message')}")
+                auth_status = "FAILED"
+                status_text = f"FAILED: {res_json.get('message')}"
+                status_color = (0, 0, 255)
+            status_timer = time.time()
+    except requests.exceptions.RequestException as e:
+        print(f"[실패] 서버 연결 실패: {e}")
+        with state_lock:
+            auth_status = "FAILED"
+            status_text = "FAILED: Server Connection Error"
+            status_color = (0, 0, 255)
+            status_timer = time.time()
+
+
+read_fail = 0
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("[Error] 프레임을 읽어올 수 없습니다.")
-        break
+        # 웹캠이 끊겨도 종료하지 않고 재연결 시도. 2회 연속 실패하면 저해상도 모드로 강등.
+        read_fail += 1
+        if read_fail == 2 and cam_profile < len(CAM_PROFILES) - 1:
+            cam_profile += 1
+            print(f"[경고] 프레임 끊김 반복 - {CAM_PROFILES[cam_profile]['name']} 모드로 전환")
+        else:
+            print(f"[경고] 프레임 읽기 실패 ({read_fail}/10) - 카메라 재연결 시도")
+        cap.release()
+        time.sleep(1.0)
+        cap = open_camera()
+        if read_fail >= 10:
+            print("[Error] 카메라 재연결 실패 - 종료합니다.")
+            break
+        continue
+    read_fail = 0
+    frame_no += 1
 
-    # 이미지 좌우 반전 (거울 모드, 시각적으로 편함)
-    frame = cv2.flip(frame, 1)
-    
-    # ── 중앙 스캔 영역 (ROI) 설정 ──
+    # ── 중앙 스캔 영역 (ROI) — 화면 짧은 변의 65% 크기 ──
     h, w, _ = frame.shape
-    box_size = 240  # 240x240 정사각 스캔 영역
+    box_size = int(min(h, w) * 0.65)
     x1 = int((w - box_size) / 2)
     y1 = int((h - box_size) / 2)
     x2 = x1 + box_size
     y2 = y1 + box_size
 
-    # 해당 중앙 영역(ROI)만 크롭하여 QR 코드 스캔용으로 사용
-    roi = frame[y1:y2, x1:x2]
+    # QR 검출은 반전 전 원본에서! (거울상 QR 은 디코딩이 안 됨)
+    # 매 3프레임마다 그레이스케일 ROI 에서 검출 — CPU 절약
+    data = ""
+    if frame_no % 3 == 0 and auth_status == "READY":
+        roi = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+        try:
+            data, bbox, _ = detector.detectAndDecode(roi)
+        except Exception:
+            data = ""
 
-    # QR 코드 검출 및 디코딩 (크롭된 영역 내에서만 검출)
-    try:
-        data, bbox, _ = detector.detectAndDecode(roi)
-    except Exception as e:
-        data, bbox = "", None
-
-    # QR 코드가 인식되었고 이전에 인식했던 토큰과 다르거나 성공 후 대기 상태인 경우
+    # QR 인식 → 인증 요청은 스레드로 (영상 루프 안 멈춤)
     if data and data != last_scanned_token:
         print(f"\n[QR 감지] 읽어온 데이터: {data}")
         last_scanned_token = data
-        auth_status = "SENDING"
-        status_text = "Sending Auth Request..."
-        status_color = (0, 165, 255)  # 주황색
+        with state_lock:
+            auth_status = "SENDING"
+            status_text = "Sending Auth Request..."
+            status_color = (0, 165, 255)
+        threading.Thread(target=send_auth, args=(data,), daemon=True).start()
 
-        # 백엔드 서버로 POST 요청 전송
-        try:
-            payload = {
-                "qrToken": data,
-                "robotSerialNumber": ROBOT_SERIAL
-            }
-            response = requests.post(SERVER_URL, json=payload, timeout=3)
-            res_json = response.json()
-
-            if response.status_code == 200 and res_json.get("success"):
-                print(f"[성공] 인증 완료! 유저 ID: {res_json.get('userId')}와 매칭되었습니다.")
-                auth_status = "SUCCESS"
-                status_text = f"SUCCESS: Matched with User {res_json.get('userId')}"
-                status_color = (0, 255, 0)  # 초록색
-            else:
-                print(f"[실패] 백엔드 응답 에러: {res_json.get('message')}")
-                auth_status = "FAILED"
-                status_text = f"FAILED: {res_json.get('message')}"
-                status_color = (0, 0, 255)  # 빨간색
-        except requests.exceptions.RequestException as e:
-            print(f"[실패] 서버 연결 실패: {e}")
-            auth_status = "FAILED"
-            status_text = "FAILED: Server Connection Error"
-            status_color = (0, 0, 255)  # 빨간색
-            
-        status_timer = time.time()  # 타이머 리셋
+    # 표시용은 좌우 반전 (거울 모드, 시각적으로 편함)
+    frame = cv2.flip(frame, 1)
 
     # ── 중앙 가이드 박스 테두리 (가벼운 흰색 실선 하나만 표시) ──
     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
 
 
-    # 3초 동안 성공/실패 메시지를 보여준 뒤 다시 대기 상태로 복원
-    if auth_status in ["SUCCESS", "FAILED"] and (time.time() - status_timer > 4.0):
-        auth_status = "READY"
-        status_text = "Scan QR Code on App"
-        status_color = (255, 255, 0)
-        last_scanned_token = ""  # 새로운 스캔을 허용하기 위해 리셋
+    # 4초 동안 성공/실패 메시지를 보여준 뒤 다시 대기 상태로 복원
+    with state_lock:
+        if auth_status in ["SUCCESS", "FAILED"] and (time.time() - status_timer > 4.0):
+            auth_status = "READY"
+            status_text = "Scan QR Code on App"
+            status_color = (255, 255, 0)
+            last_scanned_token = ""  # 새로운 스캔을 허용하기 위해 리셋
 
     # 화면에 상태 텍스트 출력
     cv2.putText(frame, status_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2, cv2.LINE_AA)
