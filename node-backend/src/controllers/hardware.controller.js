@@ -58,6 +58,17 @@ const qrScan = async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 시작 push — QR 스캔 → 고객정보 연동
+    const [userRows] = await pool.query('SELECT name FROM users WHERE id = ?', [userId]);
+    io.to('room:admin').emit('session:update', {
+      robotSerialNumber,
+      status: 'SHOPPING',
+      user: { id: Number(userId), name: userRows.length > 0 ? userRows[0].name : null },
+      items: [],
+      totalAmount: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
     return res.status(200).json({
       success: true,
       message: '로봇과 유저가 매칭되었습니다.',
@@ -205,6 +216,18 @@ const rfidScan = async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    // [WebSocket] 관리자 웹(카메라 모니터링)으로도 장바구니 실시간 push
+    const [userRows] = await pool.query('SELECT name FROM users WHERE id = ?', [userId]);
+    io.to('room:admin').emit('session:update', {
+      robotSerialNumber,
+      status: 'SHOPPING',
+      user: { id: Number(userId), name: userRows.length > 0 ? userRows[0].name : null },
+      items: cartItems,
+      totalAmount,
+      lastScanned: product.name,
+      updatedAt: new Date().toISOString(),
+    });
+
     return res.status(200).json({
       success: true,
       message: `${product.name}이(가) 장바구니에 추가되었습니다.`,
@@ -237,14 +260,70 @@ function parseCartFromRedis(cartRaw) {
 // GET /api/hardware/video-feed
 // 실시간 카메라 MJPEG 스트림 프록시 (크래시 방지 처리)
 // ───────────────────────────────────────────────
+// ───────────────────────────────────────────────
+// 로봇 실시간 위치/텔레메트리 (라파 pose_bridge.py 가 주기 전송)
+//   POST /api/hardware/pose      : SLAM 맵 좌표 (x, y, theta)
+//   POST /api/hardware/telemetry : 배터리 % · CPU 온도 (하트비트 겸용)
+//   GET  /api/hardware/pose      : 웹 관리자 첫 렌더링용 최신 위치 조회
+// DB 없이 메모리(robotState)에만 유지 → 소켓(room:admin)으로 실시간 push
+// ───────────────────────────────────────────────
+const robotState = require('../utils/robotState');
+
+const updatePose = (req, res) => {
+  const { x, y, theta, frame, robotSerialNumber } = req.body;
+
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    return res.status(400).json({ success: false, message: 'x, y 숫자 좌표가 필요합니다.' });
+  }
+
+  robotState.state.pose = {
+    x,
+    y,
+    theta: typeof theta === 'number' ? theta : 0,
+    frame: frame || 'map',                       // 'map'(AMCL) | 'odom'(폴백)
+    robotSerialNumber: robotSerialNumber || 'CartMe-ROS2-08',
+    updatedAt: new Date().toISOString(),
+  };
+
+  // [WebSocket] 관리자 웹(매장 지도 화면)으로 실시간 push
+  const io = req.app.get('io');
+  io.to('room:admin').emit('robot:pose', robotState.state.pose);
+
+  return res.status(200).json({ success: true });
+};
+
+const getPose = (req, res) => {
+  return res.status(200).json({ success: true, pose: robotState.state.pose });
+};
+
+const updateTelemetry = (req, res) => {
+  const { battery, cpuTemp, robotSerialNumber } = req.body;
+
+  robotState.state.telemetry = {
+    battery: typeof battery === 'number' ? Math.round(battery) : null, // % (배터리 토픽 없으면 null)
+    cpuTemp: typeof cpuTemp === 'number' ? cpuTemp : null,             // ℃ (라파 SoC)
+    robotSerialNumber: robotSerialNumber || 'CartMe-ROS2-08',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const io = req.app.get('io');
+  io.to('room:admin').emit('robot:telemetry', robotState.state.telemetry);
+
+  return res.status(200).json({ success: true });
+};
+
+// GET /api/hardware/video-feed[?source=robot]
+//   기본          : 노트북 QR 스캐너 캠 (qr_scanner_sim, 127.0.0.1:5000)
+//   ?source=robot : 라파 추종 카메라 (web_stream_node, PI_HOST:8090/stream)
+// QR 인증 전엔 노트북 캠, 매칭 후엔 로봇 캠을 웹이 골라 요청한다.
+const PI_HOST = process.env.PI_HOST || '192.168.0.29';
+
 const videoFeed = (req, res) => {
+  const robot = req.query.source === 'robot';
   const proxyReq = http.request(
-    {
-      host: '127.0.0.1',
-      port: 5000,
-      path: '/video_feed',
-      method: 'GET',
-    },
+    robot
+      ? { host: PI_HOST, port: 8090, path: '/stream', method: 'GET' }
+      : { host: '127.0.0.1', port: 5000, path: '/video_feed', method: 'GET' },
     (proxyRes) => {
       // 수신 스트림 에러 핸들링 (파이썬 서버 종료 시 크래시 방지)
       proxyRes.on('error', (err) => {
@@ -265,7 +344,9 @@ const videoFeed = (req, res) => {
   proxyReq.on('error', (err) => {
     console.error('[Video Feed Proxy Request Error]:', err.message);
     if (!res.headersSent) {
-      res.status(502).send('카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. 시뮬레이터가 켜져 있는지 확인하세요.');
+      res.status(502).send(robot
+        ? `로봇 카메라(${PI_HOST}:8090)에 연결할 수 없습니다. 라파 camera_node/web_stream_node 를 확인하세요.`
+        : '카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. QR 스캐너(qr_scanner_sim.py)가 켜져 있는지 확인하세요.');
     }
   });
 
@@ -277,4 +358,4 @@ const videoFeed = (req, res) => {
   proxyReq.end();
 };
 
-module.exports = { qrScan, rfidScan, videoFeed };
+module.exports = { qrScan, rfidScan, videoFeed, updatePose, getPose, updateTelemetry };

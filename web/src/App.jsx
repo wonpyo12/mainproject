@@ -10,7 +10,7 @@ import { MembersView } from './views/MembersView';
 import { InquiriesView } from './views/InquiriesView';
 import { CameraView } from './views/CameraView';
 import { MapView } from './views/MapView';
-import { fetchMockData } from './api';
+import { fetchDashboard } from './api';
 import { io } from 'socket.io-client';
 
 const BACKEND_URL = 'http://localhost:3000';
@@ -147,31 +147,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchMockData()
-      .then(res => {
-        setApiData(res);
-        
-        // localStorage에서 기존 로그인 알림 복구 및 경과 시간 갱신
-        const saved = localStorage.getItem('cartpilot_login_alerts');
-        const customAlerts = saved ? JSON.parse(saved) : [];
-        const updatedCustomAlerts = customAlerts.map(a => ({
-          ...a,
-          mins: calculateMinutesAgo(a.timestamp)
-        }));
+    let cancelled = false;
 
-        setAlerts([...updatedCustomAlerts, ...(res.alerts || [])]);
-        
-        // Auto-select first robot if available
-        if (res.robots && res.robots.length > 0) {
-          setSelected(res.robots[0].id);
+    const load = (first) => fetchDashboard()
+      .then(res => {
+        if (cancelled) return;
+        setApiData(res);
+
+        if (first) {
+          // localStorage에서 기존 로그인 알림 복구 및 경과 시간 갱신
+          const saved = localStorage.getItem('cartpilot_login_alerts');
+          const customAlerts = saved ? JSON.parse(saved) : [];
+          const updatedCustomAlerts = customAlerts.map(a => ({
+            ...a,
+            mins: calculateMinutesAgo(a.timestamp)
+          }));
+
+          setAlerts([...updatedCustomAlerts, ...(res.alerts || [])]);
+
+          // Auto-select first robot if available
+          if (res.robots && res.robots.length > 0) {
+            setSelected(res.robots[0].id);
+          }
         }
         setLoading(false);
       })
       .catch(err => {
+        if (cancelled) return;
         console.error(err);
-        setError(err.message);
+        if (first) setError(err.message);
         setLoading(false);
       });
+
+    load(true);
+    // 거래액·플릿 상태 주기 갱신 (실데이터)
+    const refresher = setInterval(() => load(false), 15000);
+    return () => { cancelled = true; clearInterval(refresher); };
   }, []);
 
   useEffect(() => {
@@ -252,10 +263,11 @@ export default function App() {
   const robots = data.robots || [];
   const sessions = data.sessions || [];
   const inventory = data.inventory || [];
-  const metrics = data.metrics || {};
   const storeInfo = data.storeInfo || {};
   const userInfo = data.userInfo || {};
   const alertCount = alerts.filter(a => a.level === 'urgent' || a.level === 'warn').length;
+  // 미처리 알림 = 실시간 알림 목록의 urgent/warn 건수 (실데이터)
+  const metrics = { ...(data.metrics || {}), unprocessedAlerts: alertCount };
 
   const currentView = isAdmin ? view : 'camera';
   const [tk, tken] = TITLES[currentView] || ['화면', ''];

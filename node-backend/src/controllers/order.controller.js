@@ -40,6 +40,10 @@ const completeOrder = async (req, res) => {
     const cartItems   = parseCartFromRedis(cartRaw);
     const totalPrice  = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
 
+    // [Redis] QR 매칭 때 기록된 쇼핑 시작 시각 (평균 쇼핑시간 통계용, 없으면 NULL)
+    const startedAtRaw = await redis.hget(robotStatusKey, 'startedAt');
+    const sessionStartedAt = startedAtRaw ? new Date(startedAtRaw) : null;
+
     // [MySQL] robots 테이블에서 serial_number로 robot DB id 조회
     const [robotRows] = await conn.query(
       'SELECT id FROM robots WHERE serial_number = ?',
@@ -54,11 +58,11 @@ const completeOrder = async (req, res) => {
     await conn.beginTransaction();
 
     // [MySQL] orders 테이블 INSERT
-    // 컬럼: user_id, robot_id, total_price, payment_status, ordered_at
+    // 컬럼: user_id, robot_id, total_price, payment_status, session_started_at, ordered_at
     const [orderResult] = await conn.query(
-      `INSERT INTO orders (user_id, robot_id, total_price, payment_status, ordered_at)
-       VALUES (?, ?, ?, 'COMPLETED', NOW())`,
-      [userId, robotId, totalPrice]
+      `INSERT INTO orders (user_id, robot_id, total_price, payment_status, session_started_at, ordered_at)
+       VALUES (?, ?, ?, 'COMPLETED', ?, NOW())`,
+      [userId, robotId, totalPrice, sessionStartedAt]
     );
     const orderId = orderResult.insertId;
 
@@ -93,6 +97,17 @@ const completeOrder = async (req, res) => {
       totalPrice,
       items: cartItems,
       completedAt: new Date().toISOString(),
+    });
+
+    // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 종료 push — 결제 완료 → 복귀
+    io.to('room:admin').emit('session:update', {
+      robotSerialNumber,
+      status: 'RETURNING',
+      user: null,
+      items: [],
+      totalAmount: 0,
+      orderTotal: totalPrice,
+      updatedAt: new Date().toISOString(),
     });
 
     return res.status(200).json({

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>CartMe · 도움 챗봇</title>
+<title>로봇 카트 · 도움 챗봇</title>
 <link rel="stylesheet" as="style" crossorigin
   href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 <style>
@@ -194,14 +194,11 @@
   <!-- Mascot definition -->
   <svg width="0" height="0" style="position:absolute">
     <defs>
+      <!-- CartMe 마스코트: a1.png 원본 이미지. 파란 아바타 박스 위라 흰색으로 반전(모양 동일) -->
       <symbol id="cart" viewBox="0 0 120 120">
-        <rect x="28" y="40" width="64" height="44" rx="14" fill="#ffffff" opacity=".95"/>
-        <rect x="28" y="40" width="64" height="14" rx="7" fill="#ffffff"/>
-        <circle cx="44" cy="94" r="7" fill="#ffffff"/>
-        <circle cx="80" cy="94" r="7" fill="#ffffff"/>
-        <circle cx="50" cy="60" r="5.5" fill="#2b6ef0"/>
-        <circle cx="70" cy="60" r="5.5" fill="#2b6ef0"/>
-        <path d="M48 72q12 9 24 0" stroke="#2b6ef0" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <image href="mascot.png" x="0" y="0" width="120" height="120"
+               preserveAspectRatio="xMidYMid meet"
+               style="filter: brightness(0) invert(1);"/>
       </symbol>
     </defs>
   </svg>
