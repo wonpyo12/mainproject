@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate as rotateDraw
@@ -304,82 +305,24 @@ private fun Mascot(
     mood: String = "wave",
     ring: Color = MascotRing,
     mesh: Color = MascotMesh,
+    onLight: Boolean = false,   // 밝은 배경 = 원본(검은 라인), 어두운/파란 배경 = 흰색 반전
 ) {
-    // 둥실 떠오르는 idle 모션
+    // 마스코트는 a1.png 원본 이미지를 그대로 사용한다 (형태 수정 없음).
+    // 어두운/파란 배경에서는 선이 안 보이므로 색만 흰색으로 반전한다 (모양 동일).
+    // ring / mesh / mood 는 호출부 호환을 위해 남겨두지만 사용하지 않는다.
     val floatT = rememberInfiniteTransition(label = "mascotFloat")
     val dy by floatT.animateFloat(
         initialValue = 0f, targetValue = -7f,
         animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "dy"
     )
-    // 손 흔들기
-    val waveDeg by floatT.animateFloat(
-        initialValue = 8f, targetValue = -22f,
-        animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "wave"
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.mascot),
+        contentDescription = "마스코트",
+        colorFilter = if (onLight) null
+                      else androidx.compose.ui.graphics.ColorFilter.tint(Color.White),
+        modifier = Modifier.size(width).offset(y = dy.dp)
     )
-    val armExtra = when (mood) {
-        "wave" -> waveDeg
-        "celebrate" -> -46f
-        else -> 0f
-    }
-
-    val height = width * (235f / 200f)
-    Canvas(modifier = Modifier.size(width, height).offset(y = dy.dp)) {
-        val sx = size.width / 200f
-        val sy = size.height / 235f
-        fun px(x: Float) = x * sx
-        fun py(y: Float) = y * sy
-
-        // handle (ring 곡선)
-        val handle = Path().apply {
-            moveTo(px(34f), py(70f))
-            cubicTo(px(34f), py(44f), px(56f), py(42f), px(70f), py(42f))
-        }
-        drawPath(handle, ring, style = Stroke(width = 11f * sx, cap = StrokeCap.Round))
-
-        // 왼팔
-        rotateDraw(18f, pivot = Offset(px(44f), py(130f))) {
-            drawRoundRect(Color.White, topLeft = Offset(px(34f), py(118f)),
-                size = Size(20f * sx, 46f * sy), cornerRadius = CornerRadius(10f * sx, 10f * sy))
-        }
-        // 오른팔 (인사)
-        rotateDraw(-18f + armExtra, pivot = Offset(px(156f), py(130f))) {
-            drawRoundRect(Color.White, topLeft = Offset(px(146f), py(116f)),
-                size = Size(20f * sx, 46f * sy), cornerRadius = CornerRadius(10f * sx, 10f * sy))
-        }
-        // 바구니 몸통
-        drawRoundRect(Color.White, topLeft = Offset(px(46f), py(78f)),
-            size = Size(108f * sx, 104f * sy), cornerRadius = CornerRadius(30f * sx, 30f * sy))
-        // mesh
-        drawLine(mesh, Offset(px(78f), py(92f)), Offset(px(78f), py(168f)), strokeWidth = 4f * sx, cap = StrokeCap.Round)
-        drawLine(mesh, Offset(px(122f), py(92f)), Offset(px(122f), py(168f)), strokeWidth = 4f * sx, cap = StrokeCap.Round)
-        drawLine(mesh, Offset(px(58f), py(150f)), Offset(px(142f), py(150f)), strokeWidth = 4f * sx, cap = StrokeCap.Round)
-        // 볼
-        drawOval(Cheek, topLeft = Offset(px(70f - 9f), py(132f - 6f)), size = Size(18f * sx, 12f * sy))
-        drawOval(Cheek, topLeft = Offset(px(130f - 9f), py(132f - 6f)), size = Size(18f * sx, 12f * sy))
-        // 눈
-        drawOval(Navy, topLeft = Offset(px(83f - 6f), py(118f - 8.5f)), size = Size(12f * sx, 17f * sy))
-        drawOval(Navy, topLeft = Offset(px(117f - 6f), py(118f - 8.5f)), size = Size(12f * sx, 17f * sy))
-        drawCircle(Color.White, radius = 2f * sx, center = Offset(px(85f), py(115f)))
-        drawCircle(Color.White, radius = 2f * sx, center = Offset(px(119f), py(115f)))
-        // 미소
-        val smile = Path().apply {
-            moveTo(px(90f), py(134f))
-            quadraticBezierTo(px(100f), py(144f), px(110f), py(134f))
-        }
-        drawPath(smile, Navy, style = Stroke(width = 4f * sx, cap = StrokeCap.Round))
-        // 다리
-        drawRoundRect(Color.White, topLeft = Offset(px(74f), py(180f)),
-            size = Size(12f * sx, 20f * sy), cornerRadius = CornerRadius(6f * sx, 6f * sy))
-        drawRoundRect(Color.White, topLeft = Offset(px(114f), py(180f)),
-            size = Size(12f * sx, 20f * sy), cornerRadius = CornerRadius(6f * sx, 6f * sy))
-        // 바퀴
-        drawCircle(ring, radius = 14f * sx, center = Offset(px(80f), py(208f)))
-        drawCircle(ring, radius = 14f * sx, center = Offset(px(120f), py(208f)))
-        drawCircle(Color.White, radius = 5f * sx, center = Offset(px(80f), py(208f)))
-        drawCircle(Color.White, radius = 5f * sx, center = Offset(px(120f), py(208f)))
-    }
 }
 
 /* ============================================================
@@ -790,7 +733,7 @@ private fun OnbStepScan(active: Boolean) {
         }
         // 마스코트 (왼쪽 아래에서 빼꼼)
         Box(Modifier.align(Alignment.BottomStart)) {
-            Mascot(width = 128.dp, mood = "idle")
+            Mascot(width = 128.dp, mood = "idle", onLight = true)
         }
     }
 }
@@ -1130,7 +1073,7 @@ private fun OnbStepFollow(active: Boolean) {
         }
         // 마스코트 (링 중앙)
         Box(Modifier.align(Alignment.Center).offset(y = (-16).dp)) {
-            Mascot(width = 146.dp, mood = "idle")
+            Mascot(width = 146.dp, mood = "idle", onLight = true)
         }
         // 인식 완료 칩
         androidx.compose.animation.AnimatedVisibility(
@@ -1236,7 +1179,7 @@ private fun OnbStepPay(active: Boolean) {
         }
         // 홈으로 복귀하는 카트
         Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 58.dp).offset(x = cartX)) {
-            Mascot(width = 112.dp, mood = "idle")
+            Mascot(width = 112.dp, mood = "idle", onLight = true)
         }
         // 영수증 · 복귀 버튼 (복귀 강조 글로우)
         Row(
@@ -1319,7 +1262,7 @@ private fun LoginScreen(
 
     Box(Modifier.fillMaxSize().background(Surface)) {
         Box(Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 18.dp).width(118.dp)) {
-            Mascot(width = 118.dp, mood = "idle", ring = Color(0xFFBFD8FF))
+            Mascot(width = 118.dp, mood = "idle", ring = Color(0xFFBFD8FF), onLight = true)
         }
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
