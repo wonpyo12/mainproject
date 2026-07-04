@@ -12,6 +12,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -43,6 +44,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate as rotateDraw
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +55,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.viewmodel.*
@@ -59,6 +64,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /* ============================================================
@@ -107,11 +113,17 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
     // 고객센터(챗봇)에서 뒤로가기 눌렀을 때 돌아갈 화면을 기억한다.
     var supportOrigin by remember { mutableStateOf(Screen.SHOPPING) }
 
+    // 챗봇 FAB 를 사용자가 드래그해서 옮긴 위치(px). 대시보드/쇼핑 화면 간 유지된다.
+    var fabOffset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var fabSize by remember { mutableStateOf(IntSize.Zero) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(screenBg)
             .padding(innerPadding)
+            .onSizeChanged { containerSize = it }
     ) {
         Crossfade(targetState = uiState.currentScreen, label = "screen") { screen ->
             when (screen) {
@@ -181,6 +193,21 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    // 사용자가 끌어서 옮긴 만큼 위치 이동
+                    .offset { IntOffset(fabOffset.x.roundToInt(), fabOffset.y.roundToInt()) }
+                    .onSizeChanged { fabSize = it }
+                    .pointerInput(containerSize, fabSize) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            // BottomEnd 기준이라 x/y 음수 = 왼쪽/위로 이동. 화면 밖으로 나가지 않도록 clamp.
+                            val minX = -(containerSize.width - fabSize.width).toFloat().coerceAtLeast(0f)
+                            val minY = -(containerSize.height - fabSize.height).toFloat().coerceAtLeast(0f)
+                            fabOffset = Offset(
+                                (fabOffset.x + drag.x).coerceIn(minX, 0f),
+                                (fabOffset.y + drag.y).coerceIn(minY, 0f),
+                            )
+                        }
+                    }
                     .padding(end = 20.dp, bottom = fabBottom)
             )
         }
@@ -1393,10 +1420,12 @@ private fun SignUpScreen(
             }
         }
 
-        // 하단 시트 (입력 + 다음)
+        // 하단 시트 (입력 + 다음) — 키보드가 올라오면 그 위로 밀어 올린다 (imePadding)
         Column(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(Surface)
+                // 키보드가 올라오면 시트를 그 위로 밀어 올린다. (배경은 키보드까지 이어지도록 imePadding 을 배경 뒤에 둔다)
+                .imePadding()
                 .padding(start = 30.dp, end = 30.dp, top = 28.dp, bottom = 38.dp)
         ) {
             Text(cur.label, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub)
