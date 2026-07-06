@@ -204,7 +204,7 @@ def _resolve_model_path() -> str:
     )
 
 
-def create_pose_estimator(num_poses: int = 6) -> PoseLandmarker:
+def create_pose_estimator(num_poses: int = 2) -> PoseLandmarker:  # 경량화: 6→2명
     opts = PoseLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=_resolve_model_path()),
         running_mode=RunningMode.IMAGE,
@@ -268,7 +268,7 @@ _REID_TRANSFORM = (
 # 사람 검출
 # ══════════════════════════════════════════════════════════════════════════════
 
-YOLO_IMGSZ = 320   # 입력 해상도 축소 → 검출 속도 향상 (기본 640 → 320)
+YOLO_IMGSZ = 256   # 입력 해상도 축소 → 검출 속도 향상 (경량화: 320 → 256)
 
 
 def detect_yolo(frame: np.ndarray, yolo) -> list[tuple[int, int, int, int]]:
@@ -964,12 +964,12 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
                     if pidx_live is not None:
                         cur_dir = infer_orientation(pose_live.pose_landmarks[pidx_live])
                     # front: 정면이 확실할 때만 (정면 인식은 신뢰도 높음)
-                    # back : 정면만 아니면 인정 — 뒤에선 포즈/방향 인식이 약해
-                    #        back 으로 안 잡히는 경우가 많으므로 'front 가 아님'으로 완화
+                    # back : 방향 제한 없음 — 사람만 잡히면 촬영 (뒤에선 포즈 인식이
+                    #        약해 제한 두면 등록이 막힘. 화면 보며 직접 돌면 됨)
                     if sname == "front":
                         dir_ok = (cur_dir == "front")
                     else:
-                        dir_ok = (cur_dir != "front")
+                        dir_ok = True
 
                 if best_box is not None and dir_ok:
                     if countdown_start is None:
@@ -1153,6 +1153,8 @@ class DetectionWorker(threading.Thread):
             result = self._process(frame, last_bbox)
             with self._out_lock:
                 self._out = result
+            # CPU 양보: 인식이 100% 점유해 화면 루프가 굶는 것 방지 (박스는 ~6fps 갱신)
+            time.sleep(0.04)
 
     def _process(self, frame: np.ndarray, last_bbox) -> dict:
         h_f, w_f    = frame.shape[:2]

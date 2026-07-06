@@ -13,21 +13,33 @@ WSL/ROS2 없이 Windows 파이썬으로 통째로 돈다.
                   + esp32_motor_node (+ cmd_vel_relay/turtlebot3 — 바퀴 쓸 때)
 
 실행 (Windows, smart_cart venv):
-  d:\\YH\\OpenCV\\smart_cart\\.venv\\Scripts\\python.exe win_track.py --pi 192.168.0.67
+  d:\\YH\\OpenCV\\smart_cart\\.venv\\Scripts\\python.exe win_track.py --pi YOUR_PI_IP
   # 바퀴까지 구동하려면 (주의: 로봇이 움직임):
-  ...win_track.py --pi 192.168.0.67 --wheels
+  ...win_track.py --pi YOUR_PI_IP --wheels
 """
 import argparse
+import os
 import shutil
 import socket
 import threading
 import time
 import urllib.request
 
+# 인식이 CPU 전체를 점유해 화면 루프가 멈추는 것(FPS:0) 방지 —
+# 추론 스레드를 제한해 화면/카메라용 코어를 남긴다. (cv2/torch import 전에 설정)
+os.environ.setdefault("OMP_NUM_THREADS", "3")
+
 import cv2
 import numpy as np
 
 import smart_cart_core as core
+
+cv2.setNumThreads(2)
+try:
+    import torch
+    torch.set_num_threads(3)
+except Exception:
+    pass
 
 
 # ── 라파 카메라 (TCP, MJPEG) ────────────────────────────────────────────────
@@ -45,28 +57,38 @@ class HttpCamera:
                 stream = urllib.request.urlopen(self._url, timeout=5)
                 buf = b""
                 while not self._stop:
-                    chunk = stream.read(8192)
+                    chunk = stream.read(16384)
                     if not chunk:
                         break
                     buf += chunk
-                    a = buf.find(b"\xff\xd8"); b = buf.find(b"\xff\xd9")
-                    if a != -1 and b != -1 and b > a:
-                        jpg = buf[a:b + 2]; buf = buf[b + 2:]
-                        fr = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
-                        if fr is not None:
-                            self._frame = fr; self._event.set()
-                        if len(buf) > 2_000_000:
-                            buf = b""
+                    # 딜레이 감소: 버퍼에 쌓인 것 중 '가장 최신' JPEG 만 사용 (오래된 프레임 버림)
+                    last_b = buf.rfind(b"\xff\xd9")
+                    if last_b != -1:
+                        last_a = buf.rfind(b"\xff\xd8", 0, last_b)
+                        if last_a != -1:
+                            jpg = buf[last_a:last_b + 2]
+                            buf = buf[last_b + 2:]          # 그 뒤만 남김(최신만)
+                            fr = cv2.imdecode(np.frombuffer(jpg, np.uint8),
+                                              cv2.IMREAD_COLOR)
+                            if fr is not None:
+                                self._frame = fr
+                                self._event.set()
+                    if len(buf) > 4_000_000:
+                        buf = b""
             except Exception as e:
                 print(f"[win] TCP 카메라 재연결... ({e})")
-                time.sleep(1.0)
+                time.sleep(0.5)
 
     def read(self):
-        if not self._event.wait(timeout=10.0):
-            print("[win] 10초간 프레임 없음 — 라파 web_stream 확인")
-            return False, None
-        self._event.clear()
-        return True, self._frame
+        # 새 프레임을 짧게 대기. WiFi 가 잠깐 끊겨도 마지막 프레임으로 버텨
+        # 세션이 죽지 않게 함 (한 번 연결되면 종료 안 됨).
+        if self._event.wait(timeout=2.0):
+            self._event.clear()
+            return True, self._frame
+        if self._frame is not None:
+            time.sleep(0.03)              # 끊김 중 — 마지막 프레임 유지
+            return True, self._frame
+        return False, None               # 최초 연결 전이면 실패
 
     def release(self):
         self._stop = True
@@ -170,7 +192,7 @@ def cleanup_session():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pi", default="192.168.0.67", help="라파 IP")
+    ap.add_argument("--pi", default=os.environ.get("PI_HOST", "YOUR_PI_IP"), help="라파 IP")
     ap.add_argument("--cam-port", type=int, default=8090)
     ap.add_argument("--cmd-port", type=int, default=9998)
     ap.add_argument("--wheels", action="store_true", help="바퀴 구동 활성화(주의)")

@@ -21,7 +21,7 @@ AMCL 을 아직 못 받았으면 /odom 원좌표를 그대로 보낸다(frame='o
 실행 (라파):
   source /opt/ros/humble/setup.bash
   export ROS_DOMAIN_ID=0   # ← bringup 과 동일하게
-  python3 pose_bridge.py --ros-args -p backend_url:=http://192.168.0.22:3000
+  python3 pose_bridge.py --ros-args -p backend_url:=http://localhost:3000
 """
 import json
 import math
@@ -63,7 +63,7 @@ def read_cpu_temp():
 class PoseBridge(Node):
     def __init__(self):
         super().__init__("pose_bridge")
-        self.declare_parameter("backend_url", "http://192.168.0.22:3000")
+        self.declare_parameter("backend_url", "http://localhost:3000")
         self.declare_parameter("robot_serial", "CartMe-ROS2-08")
         self.backend = self.get_parameter("backend_url").value.rstrip("/")
         self.serial = self.get_parameter("robot_serial").value

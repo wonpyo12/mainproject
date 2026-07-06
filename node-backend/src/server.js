@@ -2,6 +2,8 @@
 // 서버 진입점 - HTTP + Socket.io 통합 초기화
 // ===================================================================
 require('dotenv').config();
+const updateProjectIPs = require('./utils/ipUpdater');
+updateProjectIPs(); // 백엔드 IP 자동 동기화 실행
 const http = require('http');
 const { Server: SocketServer } = require('socket.io');
 

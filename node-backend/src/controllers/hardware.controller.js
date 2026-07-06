@@ -316,7 +316,7 @@ const updateTelemetry = (req, res) => {
 //   기본          : 노트북 QR 스캐너 캠 (qr_scanner_sim, 127.0.0.1:5000)
 //   ?source=robot : 라파 추종 카메라 (web_stream_node, PI_HOST:8090/stream)
 // QR 인증 전엔 노트북 캠, 매칭 후엔 로봇 캠을 웹이 골라 요청한다.
-const PI_HOST = process.env.PI_HOST || '192.168.0.29';
+const PI_HOST = process.env.PI_HOST || 'localhost';
 
 const videoFeed = (req, res) => {
   const robot = req.query.source === 'robot';
