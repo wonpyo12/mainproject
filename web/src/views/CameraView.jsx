@@ -71,13 +71,19 @@ export function CameraView({ robots = [], onTitleClick }) {
 
   // laptop 모드(QR 인증 전)일 때 브라우저 웹캠 활성화 및 QR 코드 실시간 탐지
   useEffect(() => {
-    if (source !== 'laptop') {
-      stopCamera();
-      return;
-    }
-
     let stream = null;
     let animationFrameId = null;
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+    }
 
     async function startCamera() {
       try {
@@ -96,17 +102,6 @@ export function CameraView({ robots = [], onTitleClick }) {
         console.error("Camera access error:", err);
         setScanStatus('error');
         setStreamError(true);
-      }
-    }
-
-    function stopCamera() {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-      }
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
       }
     }
 
@@ -134,6 +129,11 @@ export function CameraView({ robots = [], onTitleClick }) {
         }
       }
       animationFrameId = requestAnimationFrame(tick);
+    }
+
+    if (source !== 'laptop') {
+      stopCamera();
+      return;
     }
 
     startCamera();
