@@ -184,9 +184,19 @@ if _ROS2_OK:
     class RobotController(Node):
         """추종 속도 발행 + Nav2 원점 복귀 + 상태(FOLLOW/RETURN/IDLE/STOPPED) 관리."""
 
-        def __init__(self, topic: str = "cmd_vel", esp_ip: str = None):
+        def __init__(self, topic: str = "cmd_vel", esp_ip: str = None, pi_ip: str = None):
             super().__init__("person_follower_nav2_v2")
             self.esp_ip = esp_ip
+            self.pi_ip = pi_ip
+            self.trigger_register = False
+            self.is_registered = False
+
+            # 백엔드/앱 연동 제어 명령 구독
+            from std_msgs.msg import Empty, String
+            self.create_subscription(Empty, "/robocart/wait", self._wait_cb, 10)
+            self.create_subscription(Empty, "/robocart/resume", self._resume_cb, 10)
+            self.create_subscription(String, "/robocart/return", self._return_cb, 10)
+
             self.cmd_vel_pub = self.create_publisher(Twist, topic, 10)
             self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
             self.create_subscription(PoseWithCovarianceStamped, "amcl_pose",
@@ -198,12 +208,6 @@ if _ROS2_OK:
             self.start_y = 0.0
             self.start_yaw = 0.0
             self.has_start_pose = False
-
-            # 백엔드/앱 연동 제어 명령 구독
-            from std_msgs.msg import Empty, String
-            self.create_subscription(Empty, "/robocart/wait", self._wait_cb, 10)
-            self.create_subscription(Empty, "/robocart/resume", self._resume_cb, 10)
-            self.create_subscription(String, "/robocart/return", self._return_cb, 10)
 
             self.state = "STOPPED"          # FOLLOW / RETURN / STOPPED
             self.last_v = 0.0
@@ -225,21 +229,26 @@ if _ROS2_OK:
         def _resume_cb(self, msg):
             if self.state != "FOLLOW":
                 self.cancel_nav()
-                self.state = "FOLLOW"
-                self.send_stop()
-                set_robot_led(self.esp_ip, "STANDBY")
-                self.get_logger().info("[Cmd] 앱/웹 시작(RESUME) 명령 수신 -> FOLLOW 상태 전환. LED 노란불.")
+                if not self.is_registered:
+                    self.trigger_register = True
+                    self.get_logger().info("[Cmd] 앱/웹 시작(RESUME) 명령 수신 -> 신규 사용자 등록 시작 예정.")
+                else:
+                    self.state = "FOLLOW"
+                    self.send_stop()
+                    set_robot_led(self.esp_ip, "STANDBY")
+                    self.get_logger().info("[Cmd] 앱/웹 시작(RESUME) 명령 수신 -> 주행 활성화 (기등록 사용자). LED 노란불.")
 
         def _return_cb(self, msg):
             if msg.data == "RETURN_HOME":
                 if self.state != "RETURN":
                     self.state = "RETURN"
+                    self.is_registered = False  # 다음 사용자를 위해 등록 리셋
                     self.send_stop()
                     set_robot_led(self.esp_ip, "RUNNING")
                     if not self.has_start_pose:
                         self.get_logger().warn("AMCL 시작 위치 미저장 → (0,0) 복귀 시도.")
                     self.send_nav_goal(self.start_x, self.start_y, self.start_yaw)
-                    self.get_logger().info("[Cmd] 앱/웹 복귀(RETURN) 명령 수신 -> RETURN 상태 전환. LED 초록불.")
+                    self.get_logger().info("[Cmd] 앱/웹 복귀(RETURN) 명령 수신 -> RETURN 상태 전환 (등록 리셋). LED 초록불.")
 
         # ── 구독 콜백 ──
         def _amcl_cb(self, msg):
@@ -555,6 +564,9 @@ class DetectionWorker(threading.Thread):
         self._seq = 0
         self._stop = False
 
+    def update_profile(self, profile):
+        self._phases = profile.get("phases", {})
+
     def submit(self, frame, last_bbox):
         with self._in_lock:
             self._in_frame = frame
@@ -640,6 +652,22 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
 
     print("=== 추종 시작 ===  (화면 'q' 종료 / 터미널 '복귀'·'추종' 입력으로 모드 전환)")
     while True:
+        if follower is not None and getattr(follower, 'trigger_register', False):
+            follower.trigger_register = False
+            worker.stop()
+            worker.join()
+            new_profile = register(cam, yolo, reid, "user", grace_sec=3.0, pi_ip=follower.pi_ip)
+            profile = new_profile
+            worker = DetectionWorker(yolo, reid, face, profile, use_face)
+            worker.start()
+            follower.is_registered = True
+            follower.state = "FOLLOW"
+            set_robot_led(follower.esp_ip, "STANDBY")
+            tracker.reset(); kcf.deinit(); reg_det_bbox = None
+            last_bboxes, last_scores = [], {}
+            follower.reset_search()
+            continue
+
         frame = cam.read()
         if frame is None:
             time.sleep(0.02); continue
@@ -783,10 +811,14 @@ def console_input_thread(follower):
                 follower.send_nav_goal(follower.start_x, follower.start_y, follower.start_yaw)
         elif cmd == "추종":
             if follower.state != "FOLLOW":
-                follower.state = "FOLLOW"
-                follower.send_stop()
-                set_robot_led(follower.esp_ip, "STANDBY")
-                follower.get_logger().info("FOLLOW 모드로 전환.")
+                if not follower.is_registered:
+                    follower.trigger_register = True
+                    follower.get_logger().info("FOLLOW 요청 수신 -> 신규 사용자 등록을 시작합니다.")
+                else:
+                    follower.state = "FOLLOW"
+                    follower.send_stop()
+                    set_robot_led(follower.esp_ip, "STANDBY")
+                    follower.get_logger().info("FOLLOW 모드로 전환 (기등록 사용자).")
         elif cmd == "정지":
             follower.state = "STOPPED"
             follower.send_stop()
@@ -846,7 +878,7 @@ def main() -> int:
                   "source /opt/ros/humble/setup.bash 후 재실행하면 주행됩니다.")
         else:
             rclpy.init()
-            follower = RobotController(esp_ip=args.esp_ip)
+            follower = RobotController(esp_ip=args.esp_ip, pi_ip=args.pi_ip)
             ex = rclpy.executors.MultiThreadedExecutor()
             ex.add_node(follower)
             threading.Thread(target=ex.spin, daemon=True).start()
@@ -856,10 +888,16 @@ def main() -> int:
     if args.reset and PROFILE_PATH.exists():
         PROFILE_PATH.unlink()
     profile = load_profile()
-    if args.register or args.reset or profile is None:
-        if profile is None and not (args.register or args.reset):
-            print("[안내] 프로필 없음 → 등록 진행")
+    
+    if args.register:
         profile = register(cam, yolo, reid, args.user_id, grace_sec=args.grace, pi_ip=args.pi_ip)
+    elif profile is None:
+        # 프로필 파일이 아예 없으면 빈 프로필로 대기
+        profile = {"user_id": args.user_id, "phases": {}}
+
+    if profile and profile.get("phases"):
+        if follower is not None:
+            follower.is_registered = True
 
     try:
         run_tracking(cam, yolo, reid, face, profile,
