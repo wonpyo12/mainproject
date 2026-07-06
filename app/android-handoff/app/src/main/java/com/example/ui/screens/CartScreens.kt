@@ -12,6 +12,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -43,6 +44,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate as rotateDraw
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +55,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.viewmodel.*
@@ -59,26 +64,30 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /* ============================================================
- *  CartMe · 디자인 토큰  (CartMe.dc.html 기반)
+ *  CartMe · 디자인 토큰  (image 목업 기반 · 앰버 브랜드)
+ *  ※ 변수명은 기존 호환을 위해 유지하되 값만 CartMe 앰버 팔레트로 교체.
+ *    Blue = CartMe 노란 브랜드색(버튼/포인트), Navy = 중립 다크 텍스트.
  * ============================================================ */
-private val Blue        = Color(0xFF1F7BFF)   // primary
-private val BlueSoft    = Color(0xFFE9F2FF)   // chip / soft accent
-private val Navy        = Color(0xFF16224A)   // 본문 진한 텍스트
-private val NavyDeep    = Color(0xFF0E1B33)   // 페어링 배경
-private val ScreenBg    = Color(0xFFF5F8FC)   // 일반 화면 배경
+private val Blue        = Color(0xFFF8C038)   // primary · CartMe 앰버 (버튼/포인트 채움)
+private val AmberInk    = Color(0xFFC98A00)   // 밝은 배경 위 앰버 강조 텍스트(대비 확보)
+private val BlueSoft    = Color(0xFFFDF1D2)   // 소프트 앰버 칩 배경
+private val Navy        = Color(0xFF1E232B)   // 본문 진한 텍스트 (중립 다크)
+private val NavyDeep    = Color(0xFF14181D)   // 어두운 화면 배경(페어링/결제완료)
+private val ScreenBg    = Color(0xFFF6F0E4)   // 일반 화면 크림 배경
 private val Surface     = Color(0xFFFFFFFF)
-private val InputBg     = Color(0xFFF5F8FC)
-private val InputBorder = Color(0xFFEAEEF5)
-private val TextSub     = Color(0xFF8A93A6)
-private val TextFaint   = Color(0xFF9AA3B4)
+private val InputBg     = Color(0xFFF6F0E4)
+private val InputBorder = Color(0xFFECE3D0)
+private val TextSub     = Color(0xFF9A917F)   // 크림 위 보조 텍스트(웜 그레이)
+private val TextFaint   = Color(0xFFB4AB98)
 private val Green       = Color(0xFF22C55E)
-private val OnDarkSub   = Color(0xFF9FB2D6)
-private val LightBlue   = Color(0xFFD7E8FF)
+private val OnDarkSub   = Color(0xFFA79E88)   // 다크 배경 위 보조 텍스트
+private val LightBlue   = Color(0xFFEADCB9)   // 다크 배경 위 밝은 보조 텍스트
 private val Danger      = Color(0xFFE5484D)
-private val Line        = Color(0xFFEEF1F6)
+private val Line        = Color(0xFFF0EBDD)
 private val Cheek       = Color(0xFFFFC2D1)
 private val MascotRing  = Color(0xFFBCD7FF)
 private val MascotMesh  = Color(0xFFDCEBFF)
@@ -98,20 +107,29 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
 
     // 상태바 영역까지 화면별 배경색이 채워지도록 바깥 Box 배경을 화면에 맞춘다.
     val screenBg = when (uiState.currentScreen) {
-        Screen.SPLASH, Screen.SIGNUP, Screen.COMPLETION -> Blue
-        Screen.LOGIN, Screen.ONBOARDING -> Surface
-        Screen.DASHBOARD -> NavyDeep
+        Screen.SPLASH -> Surface                         // 스플래시: 흰 배경 + 노란 원 로고
+        Screen.SIGNUP -> Blue                            // 회원가입: 앰버 배경
+        Screen.COMPLETION -> NavyDeep                    // 결제완료: 다크 배경
+        Screen.LOGIN -> Surface
+        Screen.ONBOARDING -> ScreenBg                    // 온보딩: 크림 배경
+        Screen.DASHBOARD,                                // QR 페어링: 크림 배경 (목업)
         Screen.SHOPPING, Screen.PAYMENT, Screen.SUPPORT -> ScreenBg
     }
 
     // 고객센터(챗봇)에서 뒤로가기 눌렀을 때 돌아갈 화면을 기억한다.
     var supportOrigin by remember { mutableStateOf(Screen.SHOPPING) }
 
+    // 챗봇 FAB 를 사용자가 드래그해서 옮긴 위치(px). 대시보드/쇼핑 화면 간 유지된다.
+    var fabOffset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var fabSize by remember { mutableStateOf(IntSize.Zero) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(screenBg)
             .padding(innerPadding)
+            .onSizeChanged { containerSize = it }
     ) {
         Crossfade(targetState = uiState.currentScreen, label = "screen") { screen ->
             when (screen) {
@@ -181,6 +199,21 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    // 사용자가 끌어서 옮긴 만큼 위치 이동
+                    .offset { IntOffset(fabOffset.x.roundToInt(), fabOffset.y.roundToInt()) }
+                    .onSizeChanged { fabSize = it }
+                    .pointerInput(containerSize, fabSize) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            // BottomEnd 기준이라 x/y 음수 = 왼쪽/위로 이동. 화면 밖으로 나가지 않도록 clamp.
+                            val minX = -(containerSize.width - fabSize.width).toFloat().coerceAtLeast(0f)
+                            val minY = -(containerSize.height - fabSize.height).toFloat().coerceAtLeast(0f)
+                            fabOffset = Offset(
+                                (fabOffset.x + drag.x).coerceIn(minX, 0f),
+                                (fabOffset.y + drag.y).coerceIn(minY, 0f),
+                            )
+                        }
+                    }
                     .padding(end = 20.dp, bottom = fabBottom)
             )
         }
@@ -206,7 +239,7 @@ private fun ChatbotFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
             .shadow(20.dp, RoundedCornerShape(32.dp), ambientColor = Blue, spotColor = Blue.copy(alpha = 0.5f))
             .clip(RoundedCornerShape(32.dp))
             .background(Surface)
-            .border(1.dp, Line, RoundedCornerShape(32.dp))
+            .border(1.5.dp, Navy, RoundedCornerShape(32.dp))
             .clickable { onClick() }
             .padding(start = 7.dp, end = 18.dp, top = 7.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -214,10 +247,10 @@ private fun ChatbotFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
         // 마스코트 아바타 + 온라인 표시
         Box(
             Modifier.size(46.dp).clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFF3A86FF), Color(0xFF1B54C9)))),
+                .background(Brush.linearGradient(listOf(Blue, TutBlueDeep))),
             contentAlignment = Alignment.Center
         ) {
-            Mascot(width = 32.dp, mood = "wave", ring = Color.White, mesh = Color(0xFFCFE2FF))
+            Mascot(width = 32.dp, mood = "wave", onLight = true)
             Box(
                 Modifier.align(Alignment.BottomEnd).offset(x = (-3).dp, y = (-3).dp)
                     .size(12.dp).clip(CircleShape).background(Green)
@@ -386,9 +419,9 @@ private fun PrimaryButton(
 ) {
     val container: Color; val content: Color
     when (variant) {
-        BtnVariant.Filled  -> { container = Blue;    content = Color.White }
-        BtnVariant.Outline -> { container = InputBg; content = Navy }
-        BtnVariant.Light   -> { container = Color.White; content = Blue }
+        BtnVariant.Filled  -> { container = Blue;    content = Navy }        // 앰버 버튼 + 다크 텍스트
+        BtnVariant.Outline -> { container = Surface; content = Navy }        // 흰 버튼 + 다크 테두리
+        BtnVariant.Light   -> { container = Color.White; content = Navy }
     }
     Button(
         onClick = onClick,
@@ -397,13 +430,14 @@ private fun PrimaryButton(
         shape = RoundedCornerShape(RBtn),
         elevation = if (variant == BtnVariant.Filled)
             ButtonDefaults.buttonElevation(defaultElevation = 8.dp, pressedElevation = 2.dp) else null,
-        border = if (variant == BtnVariant.Outline)
-            androidx.compose.foundation.BorderStroke(2.dp, InputBorder) else null,
+        // 목업(네오브루탈) 스타일 — 버튼에 진한 윤곽선
+        border = androidx.compose.foundation.BorderStroke(
+            2.dp, if (enabled) Navy else Color(0xFFD8CFBB)),
         colors = ButtonDefaults.buttonColors(
             containerColor = container,
             contentColor = content,
-            disabledContainerColor = Color(0xFFBFD3F2),
-            disabledContentColor = Color.White
+            disabledContainerColor = Color(0xFFEFE1BC),
+            disabledContentColor = Color(0xFFB1A277)
         )
     ) {
         if (leadingIcon != null) {
@@ -476,7 +510,7 @@ private fun VoiceToast(message: String, modifier: Modifier = Modifier) {
         ) {
             Box(modifier = Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(Blue),
                 contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.VolumeUp, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                Icon(Icons.Filled.VolumeUp, contentDescription = null, tint = Navy, modifier = Modifier.size(17.dp))
             }
             Spacer(Modifier.width(11.dp))
             Text(message, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
@@ -489,12 +523,12 @@ private fun LogoutChip(onClick: () -> Unit, onDark: Boolean = false) {
     Box(
         modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
             .background(if (onDark) Color.White.copy(alpha = 0.14f) else Surface)
-            .then(if (onDark) Modifier else Modifier.border(1.dp, InputBorder, RoundedCornerShape(12.dp)))
+            .then(if (onDark) Modifier else Modifier.border(1.5.dp, Navy, RoundedCornerShape(12.dp)))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(Icons.Filled.ExitToApp, contentDescription = "로그아웃",
-            tint = if (onDark) Color.White else TextSub, modifier = Modifier.size(19.dp))
+            tint = if (onDark) Color.White else Navy, modifier = Modifier.size(19.dp))
     }
 }
 
@@ -503,20 +537,20 @@ private fun LogoutChip(onClick: () -> Unit, onDark: Boolean = false) {
  *    QR 스캔 → 정면/후면 촬영 → 인식·추종 → 결제·복귀
  *    좌우로 스크롤(스와이프)하면 각 단계가 페이드로 전환된다.
  * ============================================================ */
-private val DotIdle = Color(0xFFC4D2E8)
+private val DotIdle = Color(0xFFD8CFBB)
 
-// 튜토리얼 일러스트 전용 팔레트 (CartMe 튜토리얼2 기반)
-private val TutBlue     = Color(0xFF2B6EF0)   // 일러스트 기본 블루
-private val TutBlueDeep = Color(0xFF255FD6)
+// 튜토리얼 일러스트 전용 팔레트 (CartMe 앰버 기반)
+private val TutBlue     = Color(0xFFF8C038)   // 일러스트 기본 앰버
+private val TutBlueDeep = Color(0xFFE0A100)   // 앰버 음영
 private val TutMint     = Color(0xFF28C386)   // 스캔 빔 · 완료 체크
-private val TutMarkerBg = Color(0xFFDBE8FF)   // 사용자/홈 마커 배경
-private val TutFinder   = Color(0xFFCDDCF2)   // 뷰파인더 테두리
-private val TutVoice    = Color(0xFF7FD4FF)   // 음성 안내 포인트
+private val TutMarkerBg = Color(0xFFFDF1D2)   // 사용자/홈 마커 배경(소프트 앰버)
+private val TutFinder   = Color(0xFFE7DCC4)   // 뷰파인더 테두리(웜)
+private val TutVoice    = Color(0xFFFFD98A)   // 음성 안내 포인트(라이트 앰버)
 private val TutSkin     = Color(0xFFF4C9A8)
 private val TutSkinDark = Color(0xFFEAB892)
 private val TutHair     = Color(0xFF3A4661)
 private val TutHairDark = Color(0xFF2F3A52)
-private val TutFace     = Color(0xFF1F2B45)
+private val TutFace     = Color(0xFF1E232B)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -533,7 +567,7 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
             .collect { if (abs(it) > 0.02f) hintDismissed = true }
     }
 
-    Box(Modifier.fillMaxSize().background(Surface)) {
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
         Column(Modifier.fillMaxSize()) {
             // 상단 바 · 진행 점 + 건너뛰기
             Box(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp)) {
@@ -613,7 +647,7 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
             ) {
                 Text(
                     if (isLast) "시작하기" else "다음",
-                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                    color = if (isLast) Color.White else Navy, fontSize = 16.sp, fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -637,10 +671,10 @@ private fun OnboardingScreen(onFinish: () -> Unit) {
                     animationSpec = infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
                     label = "hintDx"
                 )
-                Icon(Icons.Filled.SwipeLeft, contentDescription = null, tint = Blue,
+                Icon(Icons.Filled.SwipeLeft, contentDescription = null, tint = AmberInk,
                     modifier = Modifier.size(16.dp).offset(x = dx.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("스크롤해서 둘러보기", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = Blue)
+                Text("스크롤해서 둘러보기", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = AmberInk)
             }
         }
     }
@@ -698,7 +732,7 @@ private fun OnbStepScan(active: Boolean) {
                 Modifier.fillMaxWidth().height(32.dp).background(TutBlue),
                 contentAlignment = Alignment.Center
             ) {
-                Text("CartMe", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("CartMe", color = Navy, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             Box(
                 Modifier.fillMaxWidth().padding(vertical = 18.dp),
@@ -806,7 +840,7 @@ private fun OnbStepCapture(active: Boolean) {
             Modifier.align(Alignment.TopCenter).padding(top = 48.dp)
                 .width(190.dp).height(220.dp)
                 .clip(RoundedCornerShape(26.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFFEEF4FD), Color(0xFFDFEAF9))))
+                .background(Brush.linearGradient(listOf(Color(0xFFFBF7EE), Color(0xFFF1E9D8))))
                 .border(2.dp, TutFinder, RoundedCornerShape(26.dp))
         ) {
             // 인물 (정면 ↔ 후면 플립)
@@ -873,8 +907,8 @@ private fun CaptureThumb(done: Boolean) {
     Box(
         Modifier.alpha(a).size(40.dp, 48.dp)
             .clip(RoundedCornerShape(9.dp))
-            .background(Color(0xFFEEF4FD))
-            .border(2.dp, Color(0xFFD6E2F4), RoundedCornerShape(9.dp)),
+            .background(Color(0xFFFBF7EE))
+            .border(2.dp, Color(0xFFE7DCC4), RoundedCornerShape(9.dp)),
         contentAlignment = Alignment.Center
     ) {
         if (done) {
@@ -1053,7 +1087,7 @@ private fun OnbStepFollow(active: Boolean) {
             val seg = Path()
             pm.getSegment(0f, pm.length * pathProgress, seg, true)
             drawPath(
-                seg, Color(0xFF9BBCF0),
+                seg, Color(0xFFE7C874),
                 style = Stroke(
                     width = 4.dp.toPx(), cap = StrokeCap.Round,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(9.dp.toPx(), 11.dp.toPx()))
@@ -1068,7 +1102,7 @@ private fun OnbStepFollow(active: Boolean) {
                 .clip(CircleShape).background(TutMarkerBg),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Filled.Person, contentDescription = null, tint = TutBlue,
+            Icon(Icons.Filled.Person, contentDescription = null, tint = Navy,
                 modifier = Modifier.size(26.dp))
         }
         // 마스코트 (링 중앙)
@@ -1138,9 +1172,9 @@ private fun OnbStepPay(active: Boolean) {
             Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
                 .offset(x = cardX).alpha(cardA)
                 .width(196.dp)
-                .shadow(16.dp, RoundedCornerShape(18.dp), spotColor = TutBlue.copy(alpha = 0.55f))
+                .shadow(16.dp, RoundedCornerShape(18.dp), spotColor = Navy.copy(alpha = 0.45f))
                 .clip(RoundedCornerShape(18.dp))
-                .background(Brush.linearGradient(listOf(TutBlue, Color(0xFF1F5BD6))))
+                .background(Brush.linearGradient(listOf(Color(0xFF2A2E36), NavyDeep)))
                 .padding(16.dp)
         ) {
             Text("CartPay 간편결제", color = Color.White.copy(alpha = 0.85f),
@@ -1174,7 +1208,7 @@ private fun OnbStepPay(active: Boolean) {
                 .size(50.dp).clip(RoundedCornerShape(14.dp)).background(TutMarkerBg),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Filled.Home, contentDescription = null, tint = TutBlue,
+            Icon(Icons.Filled.Home, contentDescription = null, tint = Navy,
                 modifier = Modifier.size(26.dp))
         }
         // 홈으로 복귀하는 카트
@@ -1206,10 +1240,10 @@ private fun OnbStepPay(active: Boolean) {
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.Home, contentDescription = null, tint = Color.White,
+                Icon(Icons.Filled.Home, contentDescription = null, tint = Navy,
                     modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("복귀", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("복귀", color = Navy, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1222,26 +1256,36 @@ private fun OnbStepPay(active: Boolean) {
 private fun SplashScreen(onDone: () -> Unit) {
     LaunchedEffect(Unit) { delay(2500); onDone() }
     Box(
-        Modifier.fillMaxSize().background(Blue).clickable { onDone() },
+        Modifier.fillMaxSize().background(Surface).clickable { onDone() },
         contentAlignment = Alignment.Center
     ) {
-        // 장식 원
-        Box(Modifier.align(Alignment.TopStart).offset(x = (-70).dp, y = (-80).dp)
-            .size(260.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.10f)))
-        Box(Modifier.align(Alignment.BottomEnd).offset(x = 50.dp, y = 60.dp)
-            .size(220.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.08f)))
+        // 은은한 앰버 장식 (모서리 포인트)
+        Box(Modifier.align(Alignment.TopStart).offset(x = (-60).dp, y = (-70).dp)
+            .size(200.dp).clip(CircleShape).background(Blue.copy(alpha = 0.08f)))
+        Box(Modifier.align(Alignment.BottomEnd).offset(x = 60.dp, y = 70.dp)
+            .size(180.dp).clip(CircleShape).background(Blue.copy(alpha = 0.10f)))
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("로봇 카트", fontSize = 48.sp, fontWeight = FontWeight.Black, color = Color.White,
+            // 노란 원 안에 중앙 정렬된 마스코트(다크 라인아트)
+            Box(
+                Modifier.size(156.dp)
+                    .shadow(18.dp, CircleShape, spotColor = Blue.copy(alpha = 0.55f))
+                    .clip(CircleShape).background(Blue),
+                contentAlignment = Alignment.Center
+            ) {
+                Mascot(width = 112.dp, mood = "wave", onLight = true)
+            }
+            Spacer(Modifier.height(28.dp))
+            Text("CartMe", fontSize = 42.sp, fontWeight = FontWeight.Black, color = Navy,
                 letterSpacing = (-1).sp)
-            Spacer(Modifier.height(8.dp))
-            Text("스마트 카트로 더 가벼운 장보기", fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                color = LightBlue)
-            Spacer(Modifier.height(18.dp))
-            Mascot(width = 200.dp, mood = "wave")
+            Spacer(Modifier.height(10.dp))
+            Text("나를 따라오는 스마트 카트", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = TextSub)
+            Spacer(Modifier.height(16.dp))
+            Box(Modifier.width(40.dp).height(4.dp).clip(CircleShape).background(Blue))
         }
         Text("탭하여 시작하기", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-            color = Color.White.copy(alpha = 0.85f),
+            color = TextFaint,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 54.dp))
     }
 }
@@ -1295,7 +1339,7 @@ private fun LoginScreen(
             )
             Spacer(Modifier.height(6.dp))
             Box(Modifier.fillMaxWidth().height(48.dp).clickable { onSignUp() }, contentAlignment = Alignment.Center) {
-                Text("이메일로 회원가입", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Blue)
+                Text("이메일로 회원가입", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AmberInk)
             }
         }
     }
@@ -1346,9 +1390,9 @@ private fun SignUpScreen(
     val last = step == steps.lastIndex
 
     Box(Modifier.fillMaxSize().background(Blue)) {
-        // 장식 원
+        // 장식 원 (앰버 배경 위 톤다운)
         Box(Modifier.align(Alignment.TopEnd).offset(x = 70.dp, y = (-90).dp)
-            .size(240.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.09f)))
+            .size(240.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.16f)))
 
         // 상단 바: 뒤로 + 단계 점
         Row(
@@ -1356,16 +1400,16 @@ private fun SignUpScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f))
+                Modifier.size(40.dp).clip(CircleShape).background(Navy.copy(alpha = 0.12f))
                     .clickable { if (step > 0) step-- else onBack() },
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Color.White, modifier = Modifier.size(20.dp)) }
+            ) { Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(20.dp)) }
             Spacer(Modifier.width(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                 steps.indices.forEach { i ->
                     val w by animateDpAsState(if (i == step) 24.dp else 8.dp, label = "dotw")
                     Box(Modifier.height(8.dp).width(w).clip(RoundedCornerShape(99.dp))
-                        .background(if (i <= step) Color.White else Color.White.copy(alpha = 0.38f)))
+                        .background(if (i <= step) Navy else Navy.copy(alpha = 0.28f)))
                 }
             }
         }
@@ -1382,21 +1426,23 @@ private fun SignUpScreen(
                 }) { s ->
                 val st = steps[s]
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(st.title, fontSize = 29.sp, fontWeight = FontWeight.Black, color = Color.White,
+                    Text(st.title, fontSize = 29.sp, fontWeight = FontWeight.Black, color = Navy,
                         lineHeight = 38.sp, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
-                    Text(st.subtitle, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = LightBlue,
-                        modifier = Modifier.fillMaxWidth())
+                    Text(st.subtitle, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                        color = Navy.copy(alpha = 0.65f), modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(18.dp))
-                    Mascot(width = 190.dp, mood = st.mood)
+                    Mascot(width = 190.dp, mood = st.mood, onLight = true)
                 }
             }
         }
 
-        // 하단 시트 (입력 + 다음)
+        // 하단 시트 (입력 + 다음) — 키보드가 올라오면 그 위로 밀어 올린다 (imePadding)
         Column(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(Surface)
+                // 키보드가 올라오면 시트를 그 위로 밀어 올린다. (배경은 키보드까지 이어지도록 imePadding 을 배경 뒤에 둔다)
+                .imePadding()
                 .padding(start = 30.dp, end = 30.dp, top = 28.dp, bottom = 38.dp)
         ) {
             Text(cur.label, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub)
@@ -1434,37 +1480,41 @@ private fun PairScreen(
     onGenerateQR: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().background(NavyDeep)) {
-        Box(Modifier.align(Alignment.TopStart).offset(x = (-60).dp, y = (-70).dp)
-            .size(200.dp).clip(CircleShape).background(Color(0x1F7FB4FF)))
-
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(start = 30.dp, end = 30.dp, top = 20.dp, bottom = 30.dp),
+                .padding(start = 26.dp, end = 26.dp, top = 16.dp, bottom = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                LogoutChip(onLogout, onDark = true)
+                LogoutChip(onLogout)
             }
-            Spacer(Modifier.height(8.dp))
-            Text("카트로 연결하기", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White,
+            Spacer(Modifier.height(6.dp))
+            Text("카트로 연결하기", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Navy,
                 textAlign = TextAlign.Center)
             Spacer(Modifier.height(10.dp))
             Text(
                 if (uiState.qrToken.isBlank()) "아래 버튼을 눌러 QR 코드를 만들어\n카트 카메라에 비춰주세요"
                 else "매장 카트 손잡이의 카메라에\nQR을 비추면 바로 연결돼요",
-                fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = OnDarkSub,
+                fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
                 textAlign = TextAlign.Center, lineHeight = 21.sp
             )
 
-            Spacer(Modifier.height(28.dp))
-            // 흰색 QR 카드 (실제 QR)
-            Box(Modifier.clip(RoundedCornerShape(28.dp)).background(Surface).padding(22.dp)) {
+            Spacer(Modifier.height(26.dp))
+            // 흰색 QR 카드 — 진한 윤곽선 + 그림자 (목업 스타일)
+            Box(
+                Modifier
+                    .shadow(14.dp, RoundedCornerShape(28.dp), spotColor = Navy.copy(alpha = 0.35f))
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(28.dp))
+                    .padding(22.dp)
+            ) {
                 QrCodeImage(content = uiState.qrToken, size = 180.dp)
             }
 
             if (uiState.qrToken.isNotBlank()) {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(18.dp))
                 var timeLeft by remember(uiState.qrToken) { mutableStateOf(180) }
                 LaunchedEffect(uiState.qrToken) {
                     timeLeft = 180
@@ -1474,20 +1524,18 @@ private fun PairScreen(
                 val expired = timeLeft == 0
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Timer, contentDescription = null,
-                        tint = if (expired) Danger else LightBlue, modifier = Modifier.size(16.dp))
+                        tint = if (expired) Danger else AmberInk, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(if (expired) "시간 만료 · 재발급이 필요해요" else "남은 시간 $timeString",
                         fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                        color = if (expired) Danger else Color.White)
+                        color = if (expired) Danger else AmberInk)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text("3분 내에 스캔해 주세요 · 스캔 시 자동 이동",
-                    fontSize = 11.5.sp, color = OnDarkSub, textAlign = TextAlign.Center)
+                    fontSize = 11.5.sp, color = TextSub, textAlign = TextAlign.Center)
             }
 
-            Spacer(Modifier.height(18.dp))
-            Mascot(width = 128.dp, mood = "idle", ring = Color(0xFF3A5C99), mesh = Color(0xFF21345C))
-
+            Spacer(Modifier.weight(1f))
             Spacer(Modifier.height(24.dp))
             PrimaryButton(
                 text = if (uiState.isLoading) "재발급 중..." else "QR 코드 재발급",
@@ -1515,8 +1563,11 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("나의 카트", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
                     Spacer(Modifier.width(10.dp))
-                    Text("${count}개 담김", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Blue,
-                        modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(BlueSoft)
+                    // 담김 개수 배지 — 상품 있으면 앰버 채움, 없으면 흰색 (목업)
+                    Text("${count}개 담김", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Navy,
+                        modifier = Modifier.clip(RoundedCornerShape(99.dp))
+                            .background(if (count > 0) Blue else Surface)
+                            .border(1.5.dp, Navy, RoundedCornerShape(99.dp))
                             .padding(horizontal = 12.dp, vertical = 6.dp))
                 }
                 LogoutChip({ viewModel.logout() })
@@ -1546,19 +1597,23 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                 Spacer(Modifier.height(16.dp))
             }
 
-            // 하단 결제 시트
+            // 하단 결제 시트 — 목업: 진한 테두리의 떠 있는 흰 카드
             Column(
                 modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(Surface)
-                    .padding(horizontal = 24.dp, vertical = 20.dp)
+                    .padding(horizontal = 14.dp)
+                    .padding(bottom = 14.dp, top = 4.dp)
+                    .shadow(10.dp, RoundedCornerShape(24.dp), spotColor = Navy.copy(alpha = 0.3f))
+                    .clip(RoundedCornerShape(24.dp)).background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(24.dp))
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
                     Text("총 결제금액", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = TextSub)
                     Text("${won(total)}원", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Navy)
                 }
-                Spacer(Modifier.height(16.dp))
-                PrimaryButton("결제하기", onCheckout, enabled = uiState.shoppingList.isNotEmpty())
+                Spacer(Modifier.height(14.dp))
+                PrimaryButton("결제하기", onCheckout, enabled = uiState.shoppingList.isNotEmpty(), height = 52.dp)
             }
         }
     }
@@ -1569,7 +1624,7 @@ private fun CartControlCard(uiState: CartUiState, onSet: (TrackingState) -> Unit
     val following = uiState.trackingState == TrackingState.FOLLOWING
     val tone: Color; val toneBg: Color; val icon: ImageVector; val label: String; val desc: String
     when (uiState.trackingState) {
-        TrackingState.FOLLOWING -> { tone = Blue; toneBg = BlueSoft
+        TrackingState.FOLLOWING -> { tone = AmberInk; toneBg = BlueSoft
             icon = Icons.Filled.NearMe; label = "자동 주행 중"; desc = "내 위치를 따라 이동하고 있어요" }
         TrackingState.PAUSED -> { tone = TextSub; toneBg = InputBg
             icon = Icons.Filled.Pause; label = "일시 정지"; desc = "추종 시작을 누르면 다시 따라가요" }
@@ -1579,7 +1634,13 @@ private fun CartControlCard(uiState: CartUiState, onSet: (TrackingState) -> Unit
             icon = Icons.Filled.Shield; label = "통신 지연"; desc = "Wi-Fi 연결 상태를 확인해 주세요" }
     }
 
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface).padding(16.dp)) {
+    Column(
+        Modifier.fillMaxWidth()
+            .shadow(8.dp, RoundedCornerShape(RCard), spotColor = Navy.copy(alpha = 0.25f))
+            .clip(RoundedCornerShape(RCard)).background(Surface)
+            .border(2.dp, Navy, RoundedCornerShape(RCard))
+            .padding(16.dp)
+    ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1597,11 +1658,17 @@ private fun CartControlCard(uiState: CartUiState, onSet: (TrackingState) -> Unit
             }
         }
         Spacer(Modifier.height(13.dp))
+        // 상태 박스 — 목업: 앰버 소프트 배경 + 앰버 테두리, 밝은 앰버 아이콘 사각형 + 다크 아이콘
+        val followingNow = uiState.trackingState == TrackingState.FOLLOWING
         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(toneBg)
+            .border(1.5.dp, if (followingNow) Blue else tone.copy(alpha = 0.35f), RoundedCornerShape(15.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(tone),
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
+                .background(if (followingNow) Blue else tone)
+                .then(if (followingNow) Modifier.border(1.5.dp, Navy, RoundedCornerShape(12.dp)) else Modifier),
                 contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(icon, contentDescription = null,
+                    tint = if (followingNow) Navy else Color.White, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(11.dp))
             Column {
@@ -1626,11 +1693,16 @@ private fun CartControlCard(uiState: CartUiState, onSet: (TrackingState) -> Unit
 
 @Composable
 private fun ItemRow(item: CartItem, onRemove: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
+    Row(modifier = Modifier.fillMaxWidth()
+        .shadow(6.dp, RoundedCornerShape(RCard), spotColor = Navy.copy(alpha = 0.2f))
+        .clip(RoundedCornerShape(RCard)).background(Surface)
+        .border(2.dp, Navy, RoundedCornerShape(RCard))
         .padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(56.dp).clip(RoundedCornerShape(15.dp)).background(BlueSoft),
+        // 상품 아이콘 자리 — 목업: 앰버 소프트 사각형 + 다크 테두리 + 상품명 텍스트
+        Box(Modifier.size(52.dp).clip(RoundedCornerShape(13.dp)).background(BlueSoft)
+            .border(1.5.dp, Navy, RoundedCornerShape(13.dp)),
             contentAlignment = Alignment.Center) {
-            Text(item.imageEmoji, fontSize = 26.sp)
+            Text(item.name.take(3), fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -1650,10 +1722,13 @@ private fun ItemRow(item: CartItem, onRemove: () -> Unit) {
 
 @Composable
 private fun EmptyCart() {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(Icons.Filled.ShoppingCart, contentDescription = null, tint = TextFaint, modifier = Modifier.size(40.dp))
-        Spacer(Modifier.height(10.dp))
+        // 목업: 마스코트 라인아트 워터마크
+        Box(Modifier.alpha(0.5f)) {
+            Mascot(width = 150.dp, mood = "idle", onLight = true)
+        }
+        Spacer(Modifier.height(6.dp))
         Text("카트가 비어있어요", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextSub)
         Text("로봇 RFID가 상품을 자동 인식해요", fontSize = 12.5.sp, color = TextFaint)
     }
@@ -1690,11 +1765,11 @@ private fun PaymentScreen(
                     modifier = Modifier.padding(start = 2.dp))
                 Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
-                    .border(2.dp, Blue, RoundedCornerShape(RCard)).padding(18.dp),
+                    .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)).background(Blue),
                         contentAlignment = Alignment.Center) {
-                        Text("C", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Color.White)
+                        Text("C", fontSize = 18.sp, fontWeight = FontWeight.Black, color = Navy)
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
@@ -1703,7 +1778,7 @@ private fun PaymentScreen(
                             modifier = Modifier.padding(top = 2.dp))
                     }
                     Box(Modifier.size(22.dp).clip(CircleShape).background(Blue), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Filled.Check, contentDescription = null, tint = Navy, modifier = Modifier.size(14.dp))
                     }
                 }
 
@@ -1711,12 +1786,13 @@ private fun PaymentScreen(
                 Text("결제 금액", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub,
                     modifier = Modifier.padding(start = 2.dp))
                 Spacer(Modifier.height(10.dp))
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface).padding(18.dp)) {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp)) {
                     AmountRow("상품 금액", "${won(total)}원")
                     Spacer(Modifier.height(13.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("배송비", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF5B6479))
-                        Text("무료", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Blue)
+                        Text("배송비", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
+                        Text("무료", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AmberInk)
                     }
                     Spacer(Modifier.height(14.dp))
                     Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
@@ -1724,7 +1800,7 @@ private fun PaymentScreen(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("총 결제금액", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
-                        Text("${won(total)}원", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Blue)
+                        Text("${won(total)}원", fontSize = 22.sp, fontWeight = FontWeight.Black, color = AmberInk)
                     }
                 }
 
@@ -1765,7 +1841,7 @@ private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
         spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow), label = "pop")
     LaunchedEffect(Unit) { popped = true }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Blue)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(NavyDeep)) {
         Confetti(maxWidth, maxHeight)
 
         Column(
@@ -1773,9 +1849,11 @@ private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Box(Modifier.size(96.dp).scale(pop).clip(CircleShape).background(Color.White),
+            Box(Modifier.size(96.dp).scale(pop)
+                .shadow(20.dp, CircleShape, spotColor = Blue.copy(alpha = 0.6f))
+                .clip(CircleShape).background(Blue),
                 contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = Blue, modifier = Modifier.size(54.dp))
+                Icon(Icons.Filled.Check, contentDescription = null, tint = Navy, modifier = Modifier.size(54.dp))
             }
             Spacer(Modifier.height(26.dp))
             Text("결제 완료!", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color.White)
@@ -1785,16 +1863,16 @@ private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
             Mascot(width = 170.dp, mood = "celebrate")
             Spacer(Modifier.height(4.dp))
             Text("카트는 매장 반납대로 복귀하고 있어요", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFBCD7FF))
+                color = OnDarkSub)
             Spacer(Modifier.height(36.dp))
-            PrimaryButton("처음으로", onRestart, variant = BtnVariant.Light)
+            PrimaryButton("처음으로", onRestart, variant = BtnVariant.Filled)
         }
     }
 }
 
 @Composable
 private fun Confetti(areaW: Dp, areaH: Dp) {
-    val colors = listOf(Color(0xFFFFD64D), Color.White, Color(0xFF7FB4FF), Color(0xFFFF9DBB))
+    val colors = listOf(Color(0xFFF8C038), Color.White, Color(0xFFEF6B6B), Color(0xFF35C2A0))
     val t = rememberInfiniteTransition(label = "confetti")
     val prog by t.animateFloat(
         initialValue = 0f, targetValue = 1f,

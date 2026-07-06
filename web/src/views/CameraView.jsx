@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import jsQR from 'jsqr';
 import { Card } from '../components/Card';
 import { SectionHead } from '../components/SectionHead';
 import { Badge } from '../components/Badge';
@@ -10,6 +11,7 @@ import { useRobotSession } from '../hooks/useRobotSession';
 import { resetRobotSession } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
+const BACKEND_URL = 'http://192.168.0.29:3000';
 
 export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
@@ -31,8 +33,14 @@ export function CameraView({ robots = [], onTitleClick }) {
     }
   };
 
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [scanStatus, setScanStatus] = useState('idle'); // 'idle' | 'scanning' | 'success' | 'error'
+  const [scannedToken, setScannedToken] = useState(null);
+
   const handleRetry = () => {
     setStreamError(false);
+    setScanStatus('scanning');
     setRetryKey(prev => prev + 1);
   };
 
@@ -40,12 +48,9 @@ export function CameraView({ robots = [], onTitleClick }) {
   const shopping = session && session.status === 'SHOPPING';
   const items = (session && session.items) || [];
 
-  // QR 인증 전(대기 상태): 내 PC의 QR 스캐너 캠 / 매칭 후(쇼핑중): 라즈베리파이 로봇 카메라
+  // QR 인증 전: 브라우저 내 웹캠으로 QR 스캔 / 매칭 후(쇼핑중): 로봇 추종 카메라
   const source = shopping ? 'robot' : 'laptop';
-  const BACKEND_URL = 'http://192.168.0.29:3000';
-  const streamUrl = source === 'robot'
-    ? `${BACKEND_URL}/api/hardware/video-feed?source=robot&t=${retryKey}`
-    : `http://localhost:5000/video_feed?t=${retryKey}`;
+  const streamUrl = `${BACKEND_URL}/api/hardware/video-feed?${source === 'robot' ? 'source=robot&' : ''}t=${retryKey}`;
 
   // 세션 상태가 바뀌어 소스가 전환되면 에러 상태 초기화 + 스트림 재요청
   React.useEffect(() => {
@@ -53,9 +58,127 @@ export function CameraView({ robots = [], onTitleClick }) {
     setRetryKey(prev => prev + 1);
   }, [source]);
 
+  // QR 매칭 성공 핸들러
+  const handleQRScanSuccess = async (qrToken) => {
+    setScanStatus('success');
+    setScannedToken(qrToken);
+    
+    const robotSerial = targetRobot ? targetRobot.id : "CartMe-ROS2-08";
+    
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/hardware/qr-scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qrToken, robotSerialNumber: robotSerial })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.success) {
+        console.log("[QR 스캔] 매칭 성공!");
+      } else {
+        alert(d.message || "QR 인증 실패");
+        setScanStatus('scanning');
+        setRetryKey(prev => prev + 1);
+      }
+    } catch (err) {
+      console.error("[QR 스캔 API 에러]", err.message);
+      alert("백엔드 통신 에러가 발생했습니다.");
+      setScanStatus('scanning');
+      setRetryKey(prev => prev + 1);
+    }
+  };
+
+  // laptop 모드(QR 인증 전)일 때 브라우저 웹캠 활성화 및 QR 코드 실시간 탐지
+  useEffect(() => {
+    let stream = null;
+    let animationFrameId = null;
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+    }
+
+    async function startCamera() {
+      try {
+        setScanStatus('scanning');
+        setStreamError(false);
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("SECURE_CONTEXT_ERROR");
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute("playsinline", true); // iOS 호환
+          videoRef.current.play().catch(e => console.warn("Video play interrupted", e));
+          animationFrameId = requestAnimationFrame(tick);
+        }
+      } catch (err) {
+        console.error("Camera access error:", err);
+        if (err.message === "SECURE_CONTEXT_ERROR") {
+          setScanStatus('secure-error');
+        } else {
+          setScanStatus('error');
+        }
+        setStreamError(true);
+      }
+    }
+
+    function tick() {
+      if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const ctx = canvas.getContext('2d');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+
+          if (code) {
+            console.log("QR Code found:", code.data);
+            handleQRScanSuccess(code.data);
+            stopCamera();
+            return;
+          }
+        }
+      }
+      animationFrameId = requestAnimationFrame(tick);
+    }
+
+    if (source !== 'laptop') {
+      stopCamera();
+      return;
+    }
+
+    startCamera();
+
+    return () => {
+      stopCamera();
+    };
+  }, [source, retryKey]);
+
+  const scanLineStyle = `
+    @keyframes scan-line {
+      0% { top: 5% }
+      50% { top: 95% }
+      100% { top: 5% }
+    }
+  `;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start' }}>
+      <style>{scanLineStyle}</style>
       
       {/* 왼쪽: 카메라 실시간 영상 카드 */}
       <Card pad={0}>
@@ -83,28 +206,105 @@ export function CameraView({ robots = [], onTitleClick }) {
         </div>
 
         <div style={{ position: 'relative', width: '100%', aspectRatio: '4/3', background: '#090a0f', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
-          {!streamError ? (
-            <img
-              key={retryKey}
-              src={streamUrl}
-              alt="Robot Camera Stream"
-              onError={() => setStreamError(true)}
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            />
+          {source === 'robot' ? (
+            !streamError ? (
+              <img
+                key={retryKey}
+                src={streamUrl}
+                alt="Robot Camera Stream"
+                onError={() => setStreamError(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '40px', color: 'var(--text-3)' }}>
+                <div style={{ width: 54, height: 54, borderRadius: 50, background: 'rgba(229, 72, 77, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--red)' }}>
+                  <Icon name="video-off" size={24} />
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>스트리밍 서버와 연결할 수 없습니다</div>
+                <div style={{ fontSize: 12.5, textAlign: 'center', lineHeight: '18px' }}>
+                  로봇(라파)의 카메라 노드가 켜져 있는지 확인해 주세요.<br />(web_stream :8090)
+                </div>
+                <button onClick={handleRetry} className="ctl-btn" style={{ width: 'auto', padding: '8px 16px', marginTop: 8 }}>
+                  재연결 시도
+                </button>
+              </div>
+            )
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '40px', color: 'var(--text-3)' }}>
-              <div style={{ width: 54, height: 54, borderRadius: 50, background: 'rgba(229, 72, 77, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--red)' }}>
-                <Icon name="video-off" size={24} />
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>스트리밍 서버와 연결할 수 없습니다</div>
-              <div style={{ fontSize: 12.5, textAlign: 'center', lineHeight: '18px' }}>
-                {source === 'robot'
-                  ? <>로봇(라파)의 카메라 스트리머가 켜져 있는지 확인해 주세요.<br />(pi_camera_streamer.py :5000)</>
-                  : <>노트북 QR 스캐너(qr_scanner_sim.py)가 켜져 있는지 확인해 주세요.<br />(포트: 5000)</>}
-              </div>
-              <button onClick={handleRetry} className="ctl-btn" style={{ width: 'auto', padding: '8px 16px', marginTop: 8 }}>
-                재연결 시도
-              </button>
+            <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              {scanStatus === 'error' || scanStatus === 'secure-error' ? (
+                <div style={{ color: 'var(--red)', textAlign: 'center', padding: 20 }}>
+                  <div style={{ width: 54, height: 54, borderRadius: 50, background: 'rgba(229, 72, 77, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--red)', margin: '0 auto 12px' }}>
+                    <Icon name="video-off" size={24} />
+                  </div>
+                  <div style={{ fontWeight: 700 }}>카메라를 시작할 수 없습니다</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, lineHeight: '18px' }}>
+                    {scanStatus === 'secure-error' ? (
+                      <>
+                        보안 접속(HTTPS) 환경이 아니어서 카메라 접근이 차단되었습니다.<br />
+                        스마트폰/노트북 브라우저에서 아래 설정을 완료해 주세요:<br />
+                        <strong>chrome://flags/#unsafely-treat-insecure-origin-as-secure</strong><br />
+                        위 주소에서 <code>http://192.168.0.29:5173</code>을 추가하고 활성화해 주세요.
+                      </>
+                    ) : (
+                      <>
+                        브라우저의 카메라 사용 권한을 허용해 주시거나,<br />
+                        웹캠 장치가 정상적으로 연결되어 있는지 확인해 주세요.
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : scanStatus === 'success' ? (
+                <div style={{ color: 'var(--green)', textAlign: 'center', padding: 20 }}>
+                  <div style={{ width: 54, height: 54, borderRadius: 50, background: 'rgba(53, 194, 160, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--green)', margin: '0 auto 12px' }}>
+                    <Icon name="check" size={24} />
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>QR 스캔 완료!</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+                    인증 데이터를 처리 중입니다...
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    muted
+                  />
+                  <div style={{
+                    position: 'absolute',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    border: '40px solid rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    pointerEvents: 'none'
+                  }}>
+                    <div style={{
+                      width: '200px',
+                      height: '200px',
+                      border: '3px solid var(--amber)',
+                      boxShadow: '0 0 15px rgba(248, 192, 56, 0.4)',
+                      borderRadius: '8px',
+                      position: 'relative'
+                    }}>
+                      <div style={{
+                        position: 'absolute',
+                        width: '100%',
+                        height: '2px',
+                        background: 'var(--amber)',
+                        boxShadow: '0 0 8px var(--amber)',
+                        top: '50%',
+                        animation: 'scan-line 2s infinite ease-in-out'
+                      }} />
+                    </div>
+                    <div style={{ color: '#fff', fontSize: 12.5, fontWeight: 700, marginTop: 16, background: 'rgba(0,0,0,0.7)', padding: '6px 12px', borderRadius: '4px' }}>
+                      여기에 유저 앱의 QR 코드를 비춰주세요
+                    </div>
+                  </div>
+                </>
+              )}
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
             </div>
           )}
         </div>

@@ -3,19 +3,19 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>로봇 카트 · 도움 챗봇</title>
+<title>CartMe · 도움 챗봇</title>
 <link rel="stylesheet" as="style" crossorigin
   href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 <style>
   :root{
-    --blue:#2b6ef0;
-    --blue-d:#1b54c9;
-    --blue-soft:#eaf1ff;
-    --ink:#16223a;
-    --muted:#7d899e;
-    --line:#eef1f6;
+    --blue:#f8c038;      /* CartMe 앰버 (변수명은 호환 유지) */
+    --blue-d:#c98a00;    /* 밝은 배경 위 앰버 강조 텍스트 */
+    --blue-soft:#fdf1d2;
+    --ink:#1e232b;
+    --muted:#9a917f;
+    --line:#f0ebdd;
     --ok:#1fbf75;
-    --bg:#f4f6fb;
+    --bg:#f6f0e4;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   html{height:100%;}
@@ -38,9 +38,9 @@
   }
   .avatar{
     position:relative; width:44px; height:44px; border-radius:14px;
-    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    background:linear-gradient(135deg,#f8c038,#e0a100);
     display:flex; align-items:center; justify-content:center;
-    box-shadow:0 8px 18px rgba(43,110,240,.35);
+    box-shadow:0 8px 18px rgba(224,161,0,.35);
   }
   .avatar .live{
     position:absolute; right:-2px; bottom:-2px; width:12px; height:12px;
@@ -57,7 +57,7 @@
     flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
     padding:22px 18px 12px;
     background:
-      radial-gradient(600px 300px at 50% -10%, #eef4ff 0%, transparent 60%),
+      radial-gradient(600px 300px at 50% -10%, #faf3e2 0%, transparent 60%),
       var(--bg);
     -webkit-overflow-scrolling:touch;
     display:flex; flex-direction:column; gap:14px;
@@ -77,9 +77,9 @@
   .row.user{align-self:flex-end; flex-direction:row-reverse;}
   .miniava{
     flex:0 0 auto; width:30px; height:30px; border-radius:10px;
-    background:linear-gradient(135deg,#3a78ff,#1b54c9);
+    background:linear-gradient(135deg,#f8c038,#e0a100);
     display:flex; align-items:center; justify-content:center; margin-bottom:2px;
-    box-shadow:0 6px 12px rgba(43,110,240,.3);
+    box-shadow:0 6px 12px rgba(224,161,0,.3);
   }
   .bubble{
     max-width:78vw; padding:13px 16px; font-size:14.5px; line-height:1.6;
@@ -87,8 +87,8 @@
     box-shadow:0 6px 16px rgba(20,34,58,.07);
   }
   .row.bot .bubble{background:#fff; color:var(--ink); border-radius:6px 18px 18px 18px;}
-  .row.user .bubble{background:var(--blue); color:#fff; border-radius:18px 6px 18px 18px;
-    box-shadow:0 8px 18px rgba(43,110,240,.32);}
+  .row.user .bubble{background:var(--blue); color:#1e232b; border-radius:18px 6px 18px 18px;
+    box-shadow:0 8px 18px rgba(224,161,0,.32);}
   .bubble b{font-weight:800;}
   .bubble .lead{font-weight:800; display:block; margin-bottom:6px; letter-spacing:-.3px;}
   .bubble ol{margin:4px 0 2px; padding-left:18px;}
@@ -131,11 +131,11 @@
   }
   .chip:active{transform:scale(.97); border-color:var(--blue); color:var(--blue);}
   .chip .ico{font-size:15px; line-height:1;}
-  .chip.agent{background:var(--blue); color:#fff; border-color:var(--blue);
-    box-shadow:0 8px 18px rgba(43,110,240,.3); width:100%; justify-content:center; margin-top:4px;}
+  .chip.agent{background:var(--blue); color:#1e232b; border-color:var(--blue);
+    box-shadow:0 8px 18px rgba(224,161,0,.3); width:100%; justify-content:center; margin-top:4px;}
   .chip.reset{background:transparent; border-style:dashed; color:var(--muted); width:100%; justify-content:center;}
-  .chip.inquiry{background:var(--blue); color:#fff; border-color:var(--blue);
-    box-shadow:0 8px 18px rgba(43,110,240,.3); width:100%; justify-content:center; margin-top:4px;}
+  .chip.inquiry{background:var(--blue); color:#1e232b; border-color:var(--blue);
+    box-shadow:0 8px 18px rgba(224,161,0,.3); width:100%; justify-content:center; margin-top:4px;}
 
   /* 문의 입력 폼 */
   .inqform{width:100%; animation:swapin .3s ease both;}
@@ -152,7 +152,7 @@
     font-size:14px; padding:12px; border-radius:14px; -webkit-tap-highlight-color:transparent;
   }
   .inqrow .cancel{flex:0 0 auto; padding:12px 18px; background:#fff; color:var(--muted); border:1.5px solid var(--line);}
-  .inqrow .send{background:var(--blue); color:#fff; box-shadow:0 8px 18px rgba(43,110,240,.3);}
+  .inqrow .send{background:var(--blue); color:#1e232b; box-shadow:0 8px 18px rgba(224,161,0,.3);}
   .inqrow .send:disabled{opacity:.55;}
 
   .fade-swap{animation:swapin .3s ease both;}
@@ -194,17 +194,17 @@
   <!-- Mascot definition -->
   <svg width="0" height="0" style="position:absolute">
     <defs>
-      <!-- CartMe 마스코트: a1.png 원본 이미지. 파란 아바타 박스 위라 흰색으로 반전(모양 동일) -->
+      <!-- CartMe 마스코트: a1.png 원본. 앰버 아바타 박스 위라 검정 라인으로 표시(모양 동일) -->
       <symbol id="cart" viewBox="0 0 120 120">
         <image href="mascot.png" x="0" y="0" width="120" height="120"
                preserveAspectRatio="xMidYMid meet"
-               style="filter: brightness(0) invert(1);"/>
+               style="filter: brightness(0);"/>
       </symbol>
     </defs>
   </svg>
 
 <script>
-  const bulb = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.2-1 2.5H9c0-1.3-.3-1.8-1-2.5A6 6 0 0 1 12 3Z" stroke="#1b54c9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const bulb = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.7.7-1 1.2-1 2.5H9c0-1.3-.3-1.8-1-2.5A6 6 0 0 1 12 3Z" stroke="#c98a00" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   const FAQ = [
     { id:"follow", ico:"🧭", q:"카트가 저를 안 따라와요",

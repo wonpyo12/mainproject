@@ -57,7 +57,6 @@ yarn-error.log*
 pnpm-debug.log*
 # 로컬 참고용 클론 (별도 저장소)
 mainproject/
-
 # Python pycache & compiled files
 __pycache__/
 *.pyc
