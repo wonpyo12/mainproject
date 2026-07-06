@@ -63,7 +63,7 @@ def read_cpu_temp():
 class PoseBridge(Node):
     def __init__(self):
         super().__init__("pose_bridge")
-        self.declare_parameter("backend_url", "http://192.168.0.22:3000")
+        self.declare_parameter("backend_url", "http://192.168.0.29:3000")
         self.declare_parameter("robot_serial", "CartMe-ROS2-08")
         self.backend = self.get_parameter("backend_url").value.rstrip("/")
         self.serial = self.get_parameter("robot_serial").value

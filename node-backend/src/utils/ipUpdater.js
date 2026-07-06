@@ -85,6 +85,38 @@ function updateProjectIPs() {
       }
     }
   }
+  // 4. ROS2 Pose Bridge (pose_bridge.py)
+  const poseBridgePath = path.join(__dirname, '../../../ros_ws/bridge/pose_bridge.py');
+  if (fs.existsSync(poseBridgePath)) {
+    try {
+      let content = fs.readFileSync(poseBridgePath, 'utf8');
+      const regex = /self.declare_parameter\("backend_url", "http:\/\/([^:]+):3000"\)/;
+      if (regex.test(content)) {
+        content = content.replace(regex, `self.declare_parameter("backend_url", "http://${backendIp}:3000")`);
+        fs.writeFileSync(poseBridgePath, content, 'utf8');
+        console.log(`[IP Updater] pose_bridge.py 업데이트 성공`);
+      }
+    } catch (err) {
+      console.error('[IP Updater] pose_bridge.py 수정 중 오류:', err.message);
+    }
+  }
+
+  // 5. QR Scanner Sim (qr_scanner_sim.py)
+  const qrSimPath = path.join(__dirname, '../../../qr/qr_scanner_sim.py');
+  if (fs.existsSync(qrSimPath)) {
+    try {
+      let content = fs.readFileSync(qrSimPath, 'utf8');
+      const regex = /SERVER_URL = "http:\/\/([^:]+):3000\/api\/hardware\/qr-scan"/;
+      if (regex.test(content)) {
+        content = content.replace(regex, `SERVER_URL = "http://${backendIp}:3000/api/hardware/qr-scan"`);
+        fs.writeFileSync(qrSimPath, content, 'utf8');
+        console.log(`[IP Updater] qr_scanner_sim.py 업데이트 성공`);
+      }
+    } catch (err) {
+      console.error('[IP Updater] qr_scanner_sim.py 수정 중 오류:', err.message);
+    }
+  }
+
   console.log(`[IP Updater] 웹 프론트엔드 파일 업데이트 성공 (${webUpdatedCount}개 파일 완료)`);
 }
 
