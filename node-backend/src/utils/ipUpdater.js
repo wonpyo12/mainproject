@@ -65,6 +65,7 @@ function updateProjectIPs() {
     '../../../web/src/views/InventoryView.jsx',
     '../../../web/src/views/MembersView.jsx',
     '../../../web/src/views/ProductRegisterModal.jsx',
+    '../../../web/src/views/CameraView.jsx',
   ];
 
   let webUpdatedCount = 0;
