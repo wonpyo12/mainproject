@@ -19,6 +19,18 @@ export async function sendRobotCommand(command) {
   return d;
 }
 
+// 로봇 쇼핑 세션 강제 초기화
+export async function resetRobotSession(robotSerialNumber) {
+  const res = await fetch(`${BACKEND_URL}/api/admin/robot/reset-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robotSerialNumber }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.success) throw new Error(d.message || `세션 초기화 실패 (${res.status})`);
+  return d;
+}
+
 // 백엔드 대시보드 집계 API — 로봇 플릿·오늘 거래액·평균 쇼핑시간·시간대별 세션 (실데이터)
 // 백엔드가 꺼져 있으면 mockData.json 으로 폴백해 화면은 유지한다.
 export async function fetchDashboard() {

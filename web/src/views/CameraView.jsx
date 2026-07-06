@@ -7,6 +7,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { STATUS } from '../data';
 import { useRobotSession } from '../hooks/useRobotSession';
+import { resetRobotSession } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
 
@@ -17,6 +18,18 @@ export function CameraView({ robots = [], onTitleClick }) {
   const targetRobot = robots[0] || null;
   // QR 매칭 → RFID 스캔 → 결제까지 고객 세션 실시간 반영
   const session = useRobotSession(targetRobot);
+
+  const handleResetSession = async () => {
+    if (!targetRobot) return;
+    if (window.confirm("현재 고객의 쇼핑 세션을 강제로 종료하고 초기화하시겠습니까?")) {
+      try {
+        await resetRobotSession(targetRobot.id);
+        alert("성공적으로 초기화되었습니다.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+  };
 
   const handleRetry = () => {
     setStreamError(false);
@@ -196,6 +209,35 @@ export function CameraView({ robots = [], onTitleClick }) {
                 {targetRobot.zone || '알 수 없음'}
               </dd>
             </div>
+
+            {shopping && (
+              <>
+                <div style={{ height: '1px', background: 'var(--border)', margin: '8px 0 4px' }} />
+                <button
+                  onClick={handleResetSession}
+                  className="ctl-btn"
+                  style={{
+                    width: '100%',
+                    background: 'rgba(229, 72, 77, 0.1)',
+                    color: 'var(--red)',
+                    border: '1px solid rgba(229, 72, 77, 0.2)',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 12.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    marginTop: 8
+                  }}
+                >
+                  <Icon name="log-out" size={14} />
+                  세션 강제 종료 (초기화)
+                </button>
+              </>
+            )}
           </dl>
         </Card>
       ) : (
