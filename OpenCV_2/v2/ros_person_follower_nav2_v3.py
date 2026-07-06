@@ -622,7 +622,7 @@ class DetectionWorker(threading.Thread):
                      "best_total": 0.0, "best_detail": None, "best_ori": "unknown",
                      "det_ms": 0.0, "reid_ms": 0.0, "seq": 0}
         self._seq = 0
-        self._stop = False
+        self._stop_flag = False
 
     def update_profile(self, profile):
         self._phases = profile.get("phases", {})
@@ -637,11 +637,11 @@ class DetectionWorker(threading.Thread):
             return dict(self._out)
 
     def stop(self):
-        self._stop = True
+        self._stop_flag = True
 
     def run(self):
         tm_det, tm_reid = cv2.TickMeter(), cv2.TickMeter()
-        while not self._stop:
+        while not self._stop_flag:
             frame = last_bbox = None
             with self._in_lock:
                 if self._in_frame is not None:

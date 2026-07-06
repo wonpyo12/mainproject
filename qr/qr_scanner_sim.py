@@ -14,7 +14,7 @@ camera_state = CameraState()
 
 class CamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/video_feed':
+        if self.path.startswith('/video_feed'):
             try:
                 self.send_response(200)
                 self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
@@ -86,9 +86,11 @@ ROBOT_SERIAL = "CartMe-ROS2-08"
 
 # 웹캠 초기화 (0번 기본 카메라)
 cap = cv2.VideoCapture(0)
+use_dummy = False
+
 if not cap.isOpened():
-    print("[Error] 카메라를 열 수 없습니다. 웹캠 연결을 확인하세요.")
-    exit()
+    print("[Warning] 실물 카메라를 열 수 없습니다. 더미 영상 모드로 구동합니다.")
+    use_dummy = True
 
 # OpenCV 내장 QR 코드 디텍터 초기화
 detector = cv2.QRCodeDetector()
@@ -98,6 +100,7 @@ print("  로봇 QR 카메라 시뮬레이터가 실행되었습니다.")
 print(f"  - 연동 대상 로봇 시리얼: {ROBOT_SERIAL}")
 print(f"  - 백엔드 서버 주소: {SERVER_URL}")
 print("  앱에서 생성된 QR 코드를 카메라에 비춰주세요.")
+print("  (실물 카메라가 없는 경우 더미 영상이 송출됩니다.)")
 print("  종료하려면 카메라 창에서 'q' 키를 누르세요.")
 print("==================================================")
 
@@ -109,13 +112,37 @@ last_scanned_token = ""
 status_timer = 0  # 상태 메시지 표시 타이머
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("[Error] 프레임을 읽어올 수 없습니다.")
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
 
+    # 시뮬레이터 가상 스캔 키 's' 감지
+    simulated_token = ""
+    if key == ord('s'):
+        simulated_token = "3e709f82-9276-48f2-9eb9-ffd368893f18"
+        print(f"\n[가상 스캔] 키보드 's' 입력 감지 - 토큰 스캔 실행: {simulated_token}")
+
+    if use_dummy:
+        import numpy as np
+        # 640x480 검은색 화면에 더미 텍스트 및 박스 그리기
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # 대각선으로 움직이는 가이드 사각형 그려주기
+        box_offset = int((time.time() * 60) % 200)
+        cv2.rectangle(frame, (100 + box_offset, 100 + box_offset), (200 + box_offset, 200 + box_offset), (0, 255, 0), 2)
+        cv2.putText(frame, "Webcam Sim (DUMMY MODE)", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(frame, "Webcam is busy or not connected.", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
+        cv2.putText(frame, "Press 's' key to simulate QR scan", (50, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+        ret = True
+    else:
+        ret, frame = cap.read()
+        if not ret:
+            print("[Warning] 프레임을 읽어올 수 없습니다. 더미 모드로 전환합니다.")
+            use_dummy = True
+            continue
+
     # 이미지 좌우 반전 (거울 모드, 시각적으로 편함)
-    frame = cv2.flip(frame, 1)
+    if not use_dummy:
+        frame = cv2.flip(frame, 1)
     
     # ── 중앙 스캔 영역 (ROI) 설정 ──
     h, w, _ = frame.shape
@@ -129,10 +156,15 @@ while True:
     roi = frame[y1:y2, x1:x2]
 
     # QR 코드 검출 및 디코딩 (크롭된 영역 내에서만 검출)
-    try:
-        data, bbox, _ = detector.detectAndDecode(roi)
-    except Exception as e:
-        data, bbox = "", None
+    data = ""
+    bbox = None
+    if simulated_token:
+        data = simulated_token
+    elif not use_dummy:
+        try:
+            data, bbox, _ = detector.detectAndDecode(roi)
+        except Exception as e:
+            data, bbox = "", None
 
     # QR 코드가 인식되었고 이전에 인식했던 토큰과 다르거나 성공 후 대기 상태인 경우
     if data and data != last_scanned_token:
@@ -191,9 +223,8 @@ while True:
     # 실시간 공유 프레임 업데이트 (웹 스트리밍용)
     camera_state.frame = frame
 
-    # 'q' 키를 누르면 루프 탈출 및 종료
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    # 루프 대기용 delay (0.03초 정도 줘서 CPU 부하 방지)
+    time.sleep(0.03)
 
 # 리소스 해제
 cap.release()

@@ -4,9 +4,9 @@
 //   - rfidScan: [MySQL] 상품 조회 → [Redis] 장바구니 업데이트
 //              → [WebSocket] 앱에 실시간 장바구니 푸시
 // ===================================================================
-const pool  = require('../config/db');    // [MySQL]
+const pool = require('../config/db');    // [MySQL]
 const redis = require('../config/redis'); // [Redis]
-const http  = require('http');            // [HTTP for proxying camera stream]
+const http = require('http');            // [HTTP for proxying camera stream]
 
 
 // ───────────────────────────────────────────────
@@ -40,7 +40,7 @@ const qrScan = async (req, res) => {
     const robotStatusKey = `robot:status:${robotSerialNumber}`;
     await redis.hmset(robotStatusKey, {
       userId,
-      status:    'SHOPPING',
+      status: 'SHOPPING',
       startedAt: new Date().toISOString(),
     });
 
@@ -105,16 +105,16 @@ const rfidScan = async (req, res) => {
       const lastScanTime = parseInt(lastScan.scannedAt, 10);
       if (now - lastScanTime < 2500) {
         console.log(`[Hardware -> Debounce] Ignored duplicate scan for tag: ${tag} within 2.5s`);
-        
+
         // 업데이트된 장바구니 전체 조회하여 현재 화면 유지되도록 전송
         const robotStatusKey = `robot:status:${robotSerialNumber}`;
         const userId = await redis.hget(robotStatusKey, 'userId');
         if (userId) {
           const cartKey = `cart:${userId}:${robotSerialNumber}`;
-          const cartRaw   = await redis.hgetall(cartKey);
+          const cartRaw = await redis.hgetall(cartKey);
           const cartItems = parseCartFromRedis(cartRaw);
           const totalAmount = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
-          
+
           const io = req.app.get('io');
           io.to(`user:${userId}`).emit('cart:updated', {
             items: cartItems,
@@ -138,7 +138,7 @@ const rfidScan = async (req, res) => {
     // [Redis] 로봇에 매칭된 유저 ID 조회
     const robotStatusKey = `robot:status:${robotSerialNumber}`;
     const userId = await redis.hget(robotStatusKey, 'userId');
-    
+
     if (!userId) {
       // [Fallback] 쇼핑 매칭된 유저가 없다면 관리자 상품 등록 대기열(Redis)로 임시 등록 후 Socket.io 전송
       await redis.set('rfid:pending:admin', tag, 'EX', 30);
@@ -189,7 +189,7 @@ const rfidScan = async (req, res) => {
     const dbStock = (product.stock !== null && product.stock !== undefined) ? Number(product.stock) : 0;
     if (newQty > dbStock) {
       console.log(`[Hardware] Stock limit exceeded for product: ${product.name}. Stock: ${dbStock}, Requested: ${newQty}`);
-      
+
       const io = req.app.get('io');
       io.to(`user:${userId}`).emit('cart:error', {
         message: `${product.name}의 재고가 부족합니다. (남은 재고: ${dbStock}개)`
@@ -198,13 +198,13 @@ const rfidScan = async (req, res) => {
     }
 
     await redis.hmset(cartKey, {
-      [`${product.id}_name`]:  product.name,
+      [`${product.id}_name`]: product.name,
       [`${product.id}_price`]: String(product.price),
-      [`${product.id}_qty`]:   String(newQty),
+      [`${product.id}_qty`]: String(newQty),
     });
 
     // [Redis] 업데이트된 장바구니 전체 조회
-    const cartRaw   = await redis.hgetall(cartKey);
+    const cartRaw = await redis.hgetall(cartKey);
     const cartItems = parseCartFromRedis(cartRaw);
     const totalAmount = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
 
@@ -245,13 +245,13 @@ function parseCartFromRedis(cartRaw) {
   const items = {};
   for (const [field, value] of Object.entries(cartRaw)) {
     const underscoreIdx = field.indexOf('_');
-    const productId     = field.substring(0, underscoreIdx);
-    const attr          = field.substring(underscoreIdx + 1);
+    const productId = field.substring(0, underscoreIdx);
+    const attr = field.substring(underscoreIdx + 1);
 
     if (!items[productId]) items[productId] = { productId: Number(productId) };
-    if (attr === 'name')  items[productId].name  = value;
+    if (attr === 'name') items[productId].name = value;
     if (attr === 'price') items[productId].price = Number(value);
-    if (attr === 'qty')   items[productId].qty   = Number(value);
+    if (attr === 'qty') items[productId].qty = Number(value);
   }
   return Object.values(items);
 }
@@ -316,14 +316,22 @@ const updateTelemetry = (req, res) => {
 //   기본          : 노트북 QR 스캐너 캠 (qr_scanner_sim, 127.0.0.1:5000)
 //   ?source=robot : 라파 추종 카메라 (web_stream_node, PI_HOST:8090/stream)
 // QR 인증 전엔 노트북 캠, 매칭 후엔 로봇 캠을 웹이 골라 요청한다.
-const PI_HOST = process.env.PI_HOST || '192.168.0.29';
+const PI_HOST = process.env.PI_HOST || '192.168.0.30';
 
 const videoFeed = (req, res) => {
   const robot = req.query.source === 'robot';
+
+  let clientIp = process.env.LAPTOP_IP || req.socket.remoteAddress || '127.0.0.1';
+  if (clientIp.includes('::ffff:')) {
+    clientIp = clientIp.replace('::ffff:', '');
+  } else if (clientIp === '::1') {
+    clientIp = '127.0.0.1';
+  }
+
   const proxyReq = http.request(
     robot
-      ? { host: PI_HOST, port: 8090, path: '/stream', method: 'GET' }
-      : { host: '127.0.0.1', port: 5000, path: '/video_feed', method: 'GET' },
+      ? { host: PI_HOST, port: 5000, path: '/video_feed', method: 'GET' }
+      : { host: clientIp, port: 5000, path: '/video_feed', method: 'GET' },
     (proxyRes) => {
       // 수신 스트림 에러 핸들링 (파이썬 서버 종료 시 크래시 방지)
       proxyRes.on('error', (err) => {
@@ -345,7 +353,7 @@ const videoFeed = (req, res) => {
     console.error('[Video Feed Proxy Request Error]:', err.message);
     if (!res.headersSent) {
       res.status(502).send(robot
-        ? `로봇 카메라(${PI_HOST}:8090)에 연결할 수 없습니다. 라파 camera_node/web_stream_node 를 확인하세요.`
+        ? `로봇 카메라(${PI_HOST}:5000)에 연결할 수 없습니다. 라파 pi_camera_streamer.py 를 확인하세요.`
         : '카메라 스트리밍 서버(Port 5000)를 연결할 수 없습니다. QR 스캐너(qr_scanner_sim.py)가 켜져 있는지 확인하세요.');
     }
   });

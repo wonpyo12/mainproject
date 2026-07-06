@@ -27,10 +27,12 @@ export function CameraView({ robots = [], onTitleClick }) {
   const shopping = session && session.status === 'SHOPPING';
   const items = (session && session.items) || [];
 
-  // QR 인증 전: 노트북 QR 스캐너 캠 / 매칭 후(쇼핑중): 로봇 추종 카메라
+  // QR 인증 전(대기 상태): 내 PC의 QR 스캐너 캠 / 매칭 후(쇼핑중): 라즈베리파이 로봇 카메라
   const source = shopping ? 'robot' : 'laptop';
-  const backendHost = window.location.hostname || 'localhost';
-  const streamUrl = `http://${backendHost}:3000/api/hardware/video-feed?${source === 'robot' ? 'source=robot&' : ''}t=${retryKey}`;
+  const BACKEND_URL = 'http://192.168.0.29:3000';
+  const streamUrl = source === 'robot'
+    ? `${BACKEND_URL}/api/hardware/video-feed?source=robot&t=${retryKey}`
+    : `http://localhost:5000/video_feed?t=${retryKey}`;
 
   // 세션 상태가 바뀌어 소스가 전환되면 에러 상태 초기화 + 스트림 재요청
   React.useEffect(() => {
@@ -84,7 +86,7 @@ export function CameraView({ robots = [], onTitleClick }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>스트리밍 서버와 연결할 수 없습니다</div>
               <div style={{ fontSize: 12.5, textAlign: 'center', lineHeight: '18px' }}>
                 {source === 'robot'
-                  ? <>로봇(라파)의 카메라 노드가 켜져 있는지 확인해 주세요.<br />(web_stream :8090)</>
+                  ? <>로봇(라파)의 카메라 스트리머가 켜져 있는지 확인해 주세요.<br />(pi_camera_streamer.py :5000)</>
                   : <>노트북 QR 스캐너(qr_scanner_sim.py)가 켜져 있는지 확인해 주세요.<br />(포트: 5000)</>}
               </div>
               <button onClick={handleRetry} className="ctl-btn" style={{ width: 'auto', padding: '8px 16px', marginTop: 8 }}>
