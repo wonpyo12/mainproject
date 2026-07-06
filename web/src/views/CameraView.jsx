@@ -89,6 +89,9 @@ export function CameraView({ robots = [], onTitleClick }) {
       try {
         setScanStatus('scanning');
         setStreamError(false);
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("SECURE_CONTEXT_ERROR");
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
         });
@@ -100,7 +103,11 @@ export function CameraView({ robots = [], onTitleClick }) {
         }
       } catch (err) {
         console.error("Camera access error:", err);
-        setScanStatus('error');
+        if (err.message === "SECURE_CONTEXT_ERROR") {
+          setScanStatus('secure-error');
+        } else {
+          setScanStatus('error');
+        }
         setStreamError(true);
       }
     }
@@ -206,14 +213,26 @@ export function CameraView({ robots = [], onTitleClick }) {
             )
           ) : (
             <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              {scanStatus === 'error' ? (
+              {scanStatus === 'error' || scanStatus === 'secure-error' ? (
                 <div style={{ color: 'var(--red)', textAlign: 'center', padding: 20 }}>
                   <div style={{ width: 54, height: 54, borderRadius: 50, background: 'rgba(229, 72, 77, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--red)', margin: '0 auto 12px' }}>
                     <Icon name="video-off" size={24} />
                   </div>
-                  <div style={{ fontWeight: 700 }}>카메라 권한을 얻을 수 없습니다</div>
+                  <div style={{ fontWeight: 700 }}>카메라를 시작할 수 없습니다</div>
                   <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4, lineHeight: '18px' }}>
-                    브라우저의 카메라 사용 권한을 허용해 주시거나,<br />HTTPS 또는 localhost 보안 접속 환경인지 확인해 주세요.
+                    {scanStatus === 'secure-error' ? (
+                      <>
+                        보안 접속(HTTPS) 환경이 아니어서 카메라 접근이 차단되었습니다.<br />
+                        스마트폰/노트북 브라우저에서 아래 설정을 완료해 주세요:<br />
+                        <strong>chrome://flags/#unsafely-treat-insecure-origin-as-secure</strong><br />
+                        위 주소에서 <code>http://192.168.0.29:5173</code>을 추가하고 활성화해 주세요.
+                      </>
+                    ) : (
+                      <>
+                        브라우저의 카메라 사용 권한을 허용해 주시거나,<br />
+                        웹캠 장치가 정상적으로 연결되어 있는지 확인해 주세요.
+                      </>
+                    )}
                   </div>
                 </div>
               ) : scanStatus === 'success' ? (
