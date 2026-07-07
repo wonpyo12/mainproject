@@ -3,3 +3,4 @@ __pycache__/
 models_light/*.onnx
 robocart_profile_v2.json
 robocart_profile_v3.json
+debug/debug_logs/
