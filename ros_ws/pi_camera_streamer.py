@@ -89,8 +89,8 @@ class CamHandler(BaseHTTPRequestHandler):
                     time.sleep(0.03)
                     continue
                 try:
-                    # JPEG 포맷으로 프레임 압축 (퀄리티를 50으로 낮춰 네트워크 전송 속도 극대화)
-                    ret, jpeg = cv2.imencode('.jpg', img_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
+                    # JPEG 포맷으로 프레임 압축 (q35: 무선 대역폭 절약 — VM+웹 2클라이언트 동시 수신 대비)
+                    ret, jpeg = cv2.imencode('.jpg', img_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 35])
                     if not ret:
                         time.sleep(0.01)
                         continue
@@ -102,7 +102,7 @@ class CamHandler(BaseHTTPRequestHandler):
                     self.wfile.write(jpeg.tobytes())
                     self.wfile.write(b'\r\n')
                     self.wfile.flush()
-                    time.sleep(0.07)  # 약 15fps로 대역폭 제한 (무선 네트워크 대역폭 부족에 의한 순간적인 렉 방지)
+                    time.sleep(0.1)   # 약 10fps로 대역폭 제한 (무선 네트워크 대역폭 부족에 의한 순간적인 렉 방지)
                 except (ConnectionResetError, BrokenPipeError):
                     break
                 except Exception as e:

@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import threading
 import time
@@ -66,6 +67,7 @@ MODELS_DIR   = HERE / "models_light"
 PROFILE_PATH = HERE / "robocart_profile_v3.json"
 
 REID_ONNX  = MODELS_DIR / "osnet_x1_0.onnx"
+REID_MODEL_NAME = "x1_0"   # main()에서 --reid-model 값으로 갱신. 프로필 호환성 검사용
 YUNET_ONNX = MODELS_DIR / "face_detection_yunet.onnx"
 YOLO_ONNX_BY_SZ = {320: MODELS_DIR / "yolov8n.onnx",
                    256: MODELS_DIR / "yolov8n_256.onnx",
@@ -85,6 +87,36 @@ def pick_yolo_onnx(imgsz: int):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 디버그 로그 (JSONL) — analyze_debug.py 로 분석
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DebugLog:
+    """인식/주행 이벤트를 debug_logs/run_*.jsonl 에 기록. 비활성화 시 no-op."""
+
+    def __init__(self, enabled: bool = False):
+        self.f = None
+        self.path = None
+        if enabled:
+            d = HERE / "debug_logs"
+            d.mkdir(exist_ok=True)
+            self.path = d / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            self.f = open(self.path, "w", encoding="utf-8", buffering=1)  # 줄 단위 flush
+
+    def log(self, ev: str, **kw):
+        if self.f is None:
+            return
+        kw["ev"] = ev
+        kw["t"] = round(time.time(), 3)
+        try:
+            self.f.write(json.dumps(kw, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+
+DBG = DebugLog(enabled=False)   # main()에서 --no-debug-log 아니면 활성화
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 분산 카메라 — 라즈베리파이 MJPEG(:5000) 수신 (작업순서 1번)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -98,12 +130,18 @@ class MjpegCamera:
     인터페이스는 robocart_light 의 Camera 와 동일: read()->frame|None / opened() / stop()
     """
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, mirror: bool = False):
         self.url = url
+        self._mirror = mirror          # True: 좌우반전 보정 (카메라가 거울상일 때)
         self._frame: np.ndarray | None = None
+        self._frame_at = 0.0           # 마지막 프레임 수신 시각 (신선도 판정)
+        self._rx_n = 0                 # 수신 프레임 카운터 (fps 진단용)
         self._running = True
         self._th = threading.Thread(target=self._loop, daemon=True)
         self._th.start()
+
+    def rx_count(self) -> int:
+        return self._rx_n
 
     def _loop(self):
         while self._running:
@@ -116,16 +154,29 @@ class MjpegCamera:
                     if not chunk:
                         break
                     buf += chunk
-                    a = buf.find(b"\xff\xd8")     # JPEG SOI
-                    b = buf.find(b"\xff\xd9")     # JPEG EOI
-                    if a != -1 and b != -1 and a < b:
-                        jpg = buf[a:b + 2]
+                    # 최신 프레임만 디코드: 버퍼에 완성 JPEG이 여러 장 쌓여 있으면
+                    # 마지막 한 장만 취하고 이전 것은 폐기 (디코드가 수신을 못 따라갈 때
+                    # 지연이 계속 누적되는 것을 방지)
+                    b = buf.rfind(b"\xff\xd9")    # 마지막 JPEG EOI
+                    if b == -1:
+                        continue
+                    a = buf.rfind(b"\xff\xd8", 0, b)   # 그 앞의 SOI
+                    if a == -1:
                         buf = buf[b + 2:]
-                        f = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
-                        if f is not None:
-                            self._frame = f
+                        continue
+                    jpg = buf[a:b + 2]
+                    buf = buf[b + 2:]
+                    f = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+                    if f is not None:
+                        if self._mirror:
+                            f = cv2.flip(f, 1)   # 좌우반전 보정 (인식·라이다 방위 일관)
+                        self._frame = f
+                        self._frame_at = time.time()
+                        self._rx_n += 1
             except Exception:
-                self._frame = None
+                # 프레임은 지우지 않음 — read()의 신선도 검사가 오래된 프레임을 걸러줌.
+                # (여기서 None 으로 지우면 잠깐의 끊김에도 화면이 검게 멈춤)
+                pass
             finally:
                 if stream is not None:
                     try:
@@ -133,11 +184,14 @@ class MjpegCamera:
                     except Exception:
                         pass
             if self._running:
-                time.sleep(1.0)               # 재연결 대기
+                time.sleep(0.3)               # 재연결 대기 (1.0→0.3: 끊김 시 공백 단축)
 
     def read(self):
+        # 2초 이상 오래된 프레임은 없는 것으로 처리 (끊긴 스트림으로 주행 판단 방지)
         f = self._frame
-        return f.copy() if f is not None else None
+        if f is None or time.time() - self._frame_at > 2.0:
+            return None
+        return f.copy()
 
     def opened(self):
         return self._running
@@ -156,23 +210,48 @@ BURGER_MAX_ANG = 2.84
 
 # 거리 추정(bbox 폭 핀홀): 거리[cm] = CALIB_K / bbox_width[px]  (실차 보정 필요)
 CALIB_K        = 22000.0
-TARGET_DIST_CM = 35.0
-DIST_NEAR_CM   = 30.0
-DIST_FAR_CM    = 40.0
-CENTER_DEADBAND = 0.12
+# 목표 35cm는 전방 정지 기준(FRONT_STOP_M=0.25m)과 겹쳐 전진이 수시로 차단됨 → 50cm로 상향
+TARGET_DIST_CM = 50.0
+DIST_NEAR_CM   = 40.0
+DIST_FAR_CM    = 60.0
+CENTER_DEADBAND = 0.05   # 0.08→0.05: 중앙 유지 판정 강화
+# 중앙 우선 주행: |중심 오차|×이 값 만큼 전진 감속 (1.5면 오차 0.67에서 전진 0)
+CENTER_HOLD_GAIN = 1.5
 
-KP_LIN_DIST = 0.004
-KP_ANG      = 0.5
-MAX_LIN     = 0.12
+KP_LIN_DIST = 0.006      # 0.004→0.006: 사람 보행 속도 대응 (err 20cm 이상이면 MAX_LIN 도달)
+KP_ANG      = 0.8        # 0.5→0.8: 회전 추종 반응 강화 (시야 이탈 방지)
+MAX_LIN     = 0.18       # 0.12→0.18: Burger 한계(0.22) 이내 상향
 MAX_LIN_REV = 0.08
-MAX_ANG     = 0.5
+MAX_ANG     = 1.0        # 0.5→1.0: Burger 한계(2.84) 이내 상향
 ALLOW_REVERSE = True
 
 FRONT_STOP_M = 0.25      # 전방 라이다 이 거리 이내 장애물이면 전진 0 (안전)
 
 # 유실 탐색: 등록자 놓치면 제자리서 좌우 교대 저속 회전(v=0)으로 재탐색
-SEARCH_ANG         = 0.15  # 탐색 회전 각속도(rad/s)
+SEARCH_ANG         = 0.25  # 탐색 회전 각속도(rad/s) — 재발견 속도/오인식(SEARCH_CONFIRM 5프레임 게이트) 절충
 SEARCH_HALF_PERIOD = 3.0   # 한 방향 회전 지속(초) — 이 주기로 좌↔우 반전
+
+# 등록 촬영: 방향(front/back)당 최소 샘플 수 — 미달이면 REG_MAX_SEC까지 수집 연장
+REG_MIN_SAMPLES = 20
+REG_MAX_SEC     = 15.0
+
+# 라이다 브리징: 카메라 유실 직후 마지막 방위의 라이다 덩어리(사람 다리)를 잠시 추종
+BRIDGE_MAX_SEC  = 2.0    # 마지막 카메라 추적 후 이 시간까지만 브리징 허용
+BRIDGE_CONE_DEG = 20     # 마지막 방위 ± 탐색 콘(도)
+BRIDGE_MIN_M    = 0.2    # 이보다 가까우면 무시 (로봇 자신/벽 오인 방지)
+BRIDGE_MAX_M    = 1.5    # 이보다 멀면 사람 아님으로 간주
+BRIDGE_MAX_LIN  = 0.10   # 브리징 중 전진 상한 (보수적, 후진 없음)
+# 등록 중 YOLO 재검출 주기(샘플 단위) — 사이 프레임은 직전 bbox 재사용(ReID만)
+REG_DETECT_EVERY = 5
+
+# 부드러운 주행: 속도 명령 가속도 제한 (계단식 명령 → 미끄러지듯 변화)
+ACC_LIN_UP   = 0.25   # 전진 가속 한계 (m/s²)
+ACC_LIN_DOWN = 0.80   # 감속 한계 (안전상 감속은 빠르게)
+ACC_ANG      = 2.5    # 회전 가속 한계 (rad/s²)
+
+# 검출 공백 시 bbox 속도 외삽(예측 조향): 옛 위치가 아닌 현재 추정 위치로 조향
+PRED_MAX_SEC = 0.8    # 마지막 검출 후 외삽 허용 최대 시간
+PRED_MAX_VX  = 400.0  # 수평 이동 외삽 속도 상한 (px/s)
 
 
 def _clamp(x, lo, hi):
@@ -192,10 +271,14 @@ if _ROS2_OK:
     class RobotController(Node):
         """추종 속도 발행 + Nav2 원점 복귀 + 상태(FOLLOW/RETURN/IDLE/STOPPED) 관리."""
 
-        def __init__(self, topic: str = "cmd_vel", esp_ip: str = None, pi_ip: str = None):
+        def __init__(self, topic: str = "cmd_vel", esp_ip: str = None, pi_ip: str = None,
+                     ang_sign: float = 1.0):
             super().__init__("person_follower_nav2_v3")
             self.esp_ip = esp_ip
             self.pi_ip = pi_ip
+            self.ang_sign = ang_sign   # 회전 방향 반전용 (-1.0: 카메라 미러/모터 배선 반대일 때)
+            self._last_bearing = 0.0   # 마지막 카메라 추적 방위(rad, +=좌) — 라이다 브리징용
+            self._last_seen_t = None   # 마지막 카메라 추적 시각
             self.trigger_register = False
             self.is_registered = False
             
@@ -312,6 +395,9 @@ if _ROS2_OK:
             x1, y1, x2, y2 = bbox
             cx = (x1 + x2) / 2.0
             cx_norm = cx / frame_w
+            # 라이다 브리징용: 마지막 추적 방위/시각 기록
+            self._last_bearing = (0.5 - cx_norm) * math.radians(70.0)
+            self._last_seen_t = time.time()
 
             # 라이다 우선, 없으면 bbox 폭 핀홀 폴백
             lidar_cm = self._lidar_dist_cm(cx_norm)
@@ -332,7 +418,48 @@ if _ROS2_OK:
                     v = 0.0 if not ALLOW_REVERSE else max(v, -MAX_LIN_REV)
 
             err_c = (cx - frame_w / 2.0) / (frame_w / 2.0)
-            w = 0.0 if abs(err_c) < CENTER_DEADBAND else _clamp(-KP_ANG * err_c, -MAX_ANG, MAX_ANG)
+            w = 0.0 if abs(err_c) < CENTER_DEADBAND else _clamp(
+                -KP_ANG * err_c * self.ang_sign, -MAX_ANG, MAX_ANG)
+            # 중앙 우선 주행: 사람이 중앙에서 벗어날수록 전진을 감속해
+            # 회전으로 먼저 중앙에 모은다 (가장자리로 밀려 시야 이탈하는 것 방지)
+            if v > 0:
+                v *= max(0.0, 1.0 - abs(err_c) * CENTER_HOLD_GAIN)
+            return v, w
+
+        # ── 라이다 브리징: 카메라 유실 직후 마지막 방위의 라이다 덩어리를 잠시 추종 ──
+        def lidar_bridge(self):
+            """카메라 추적이 끊긴 직후(BRIDGE_MAX_SEC 이내) 마지막 방위 ±콘에서
+            사람으로 추정되는 가장 가까운 라이다 반사체를 향해 (v, w)를 만든다.
+            조건이 안 되면 None (호출부에서 정지 처리)."""
+            if self._last_seen_t is None or time.time() - self._last_seen_t > BRIDGE_MAX_SEC:
+                return None
+            scan = self.latest_scan
+            if scan is None or not scan.ranges:
+                return None
+            n = len(scan.ranges)
+            center = int(round(math.degrees(self._last_bearing))) % 360
+            best = None   # (dist_m, bearing_rad)
+            for off in range(-BRIDGE_CONE_DEG, BRIDGE_CONE_DEG + 1):
+                idx = (center + off) % 360
+                if idx >= n:
+                    continue
+                r = scan.ranges[idx]
+                if (scan.range_min < r < scan.range_max and math.isfinite(r)
+                        and BRIDGE_MIN_M < r < BRIDGE_MAX_M):
+                    if best is None or r < best[0]:
+                        ang = math.radians(((center + off + 180) % 360) - 180)
+                        best = (r, ang)
+            if best is None:
+                return None
+            dist_cm = best[0] * 100.0
+            self._last_bearing = best[1]      # 덩어리 방향으로 갱신 (이동 추적)
+            self.last_dist_cm = dist_cm
+            self._dist_mode = "BRIDGE"
+            if DIST_NEAR_CM <= dist_cm <= DIST_FAR_CM:
+                v = 0.0
+            else:
+                v = _clamp(KP_LIN_DIST * (dist_cm - TARGET_DIST_CM), 0.0, BRIDGE_MAX_LIN)
+            w = _clamp(KP_ANG * best[1] * self.ang_sign, -MAX_ANG, MAX_ANG)
             return v, w
 
         # ── 유실 시 좌우 탐색 회전 (v=0, w=±SEARCH_ANG 교대) ──
@@ -350,11 +477,22 @@ if _ROS2_OK:
             self._search_start = None
 
         def send_velocity(self, v, w):
-            """FOLLOW 상태에서만 실제 발행 (RETURN 중엔 Nav2가 /cmd_vel 통제)."""
+            """FOLLOW 상태에서만 실제 발행 (RETURN 중엔 Nav2가 /cmd_vel 통제).
+            가속도 제한 필터로 명령 급변을 걸러 부드럽게 주행."""
             if self.state != "FOLLOW":
                 return
             if v > 0 and self.front_blocked():       # 안전: 전방 막히면 전진 취소
                 v = 0.0
+            now = time.time()
+            dt = _clamp(now - getattr(self, "_sm_t", now), 0.02, 0.3)
+            self._sm_t = now
+            # 전진: 가속은 완만하게, 감속(정지 방향)은 빠르게 (안전)
+            up, down = ACC_LIN_UP * dt, ACC_LIN_DOWN * dt
+            if abs(v) > abs(self.last_v):
+                v = _clamp(v, self.last_v - up, self.last_v + up)
+            else:
+                v = _clamp(v, self.last_v - down, self.last_v + down)
+            w = _clamp(w, self.last_w - ACC_ANG * dt, self.last_w + ACC_ANG * dt)
             self.publish(v, w)
 
         def publish(self, v, w):
@@ -430,6 +568,16 @@ def _avg_embed(embs):
     m = np.mean(np.asarray(embs, np.float32), axis=0)
     n = float(np.linalg.norm(m))
     return (m / n).tolist() if n > 0 else m.tolist()
+
+
+def _pick_diverse(embs, k=8):
+    """수집 시간축에서 고르게 k개 대표 샘플 선택 (자세 다양성 확보).
+    매칭 시 max 비교용 — 평균 1개보다 자세 변화에 훨씬 강함."""
+    embs = [e for e in embs if e]
+    if len(embs) <= k:
+        return embs
+    idx = np.linspace(0, len(embs) - 1, k).round().astype(int)
+    return [embs[i] for i in idx]
 
 
 def _avg_color(colors):
@@ -523,6 +671,7 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 5.0, pi_ip: str = None
               ("back",  "BACK: turn around")]
     profile = {"user_id": user_id,
                "registered_at": datetime.now().isoformat(timespec="seconds"),
+               "reid_model": REID_MODEL_NAME,   # 모델이 다르면 임베딩 호환 안 됨
                "phases": {}}
 
     # 위치 잡을 시간(grace) 카운트다운
@@ -561,43 +710,94 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 5.0, pi_ip: str = None
         lock = threading.Lock()
 
         def _worker():
+            # 등록 중엔 대상이 제자리에 서 있으므로 무거운 YOLO 검출은
+            # REG_DETECT_EVERY 샘플마다 한 번만 하고, 그 사이엔 직전 bbox를
+            # 재사용해 가벼운 ReID 임베딩만 수행 → 샘플 수집 속도 수 배 향상
+            last_bb = None
+            since_det = REG_DETECT_EVERY   # 첫 프레임은 반드시 검출
+            det_fails = 0
+            last_rx = -1
             while not stop_flag["v"]:
+                # 새 프레임이 도착했을 때만 처리 (같은 프레임 중복 샘플 방지)
+                if hasattr(cam, "rx_count"):
+                    rx = cam.rx_count()
+                    if rx == last_rx:
+                        time.sleep(0.005); continue
+                    last_rx = rx
                 f = cam.read()
                 if f is None:
                     time.sleep(0.01); continue
-                bb = largest_bbox(yolo.detect(f))
-                if bb is None:
-                    with lock:
-                        shared["bbox"] = None
-                    continue
+                det_ms = 0.0
+                if last_bb is None or since_det >= REG_DETECT_EVERY:
+                    t0 = time.time()
+                    bb = largest_bbox(yolo.detect(f))
+                    det_ms = (time.time() - t0) * 1000
+                    since_det = 0
+                    if bb is None:
+                        det_fails += 1
+                        print(f"[register/{pname}] det={det_ms:.0f}ms 사람검출 실패 {det_fails}회 "
+                              f"(frame {f.shape[1]}x{f.shape[0]})")
+                        # 등록 중엔 대상이 제자리 → 일시적 검출 실패(블러/조명)는
+                        # 직전 bbox로 계속 샘플 수집. 3연속 실패 시에만 bbox 폐기.
+                        if last_bb is not None and det_fails < 3:
+                            bb = last_bb
+                        else:
+                            last_bb = None
+                            with lock:
+                                shared["bbox"] = None
+                            continue
+                    else:
+                        det_fails = 0
+                        last_bb = bb
+                else:
+                    bb = last_bb
+                since_det += 1
                 x1, y1, x2, y2 = bb
                 crop = f[max(0, y1):y2, max(0, x1):x2]
                 if crop.size > 0:
+                    t1 = time.time()
                     feat = extract_features(crop, reid)
+                    emb_ms = (time.time() - t1) * 1000
                     if feat["reid_emb"]:
                         with lock:
                             embs.append(feat["reid_emb"]); cols.append(feat["color"])
                             shared["bbox"] = bb; shared["n"] = len(embs)
+                        print(f"[register/{pname}] det={det_ms:.0f}ms emb={emb_ms:.0f}ms "
+                              f"샘플 {len(embs)}개")
 
         th = threading.Thread(target=_worker, daemon=True)
         th.start()
-        t_end = time.time() + 3.0
-        while time.time() < t_end:
+        # 기본 3초 수집하되, 샘플이 REG_MIN_SAMPLES 미만이면 REG_MAX_SEC까지 연장
+        # (추론이 느리거나 검출이 늦으면 3초 안에 1~2개만 모여 프로필이 부실해짐)
+        t_start = time.time()
+        rx_start = cam.rx_count() if hasattr(cam, "rx_count") else 0
+        while True:
+            elapsed = time.time() - t_start
+            with lock:
+                bb, n = shared["bbox"], shared["n"]
+            if elapsed >= 3.0 and (n >= REG_MIN_SAMPLES or elapsed >= REG_MAX_SEC):
+                break
             frame = cam.read()
             if frame is None:
                 time.sleep(0.02); continue
-            with lock:
-                bb, n = shared["bbox"], shared["n"]
             if bb is not None:
                 cv2.rectangle(frame, (bb[0], bb[1]), (bb[2], bb[3]), (0, 255, 0), 2)
             cv2.putText(frame, f"{pname} capturing... {n}", (20, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
             _show(frame)
+            time.sleep(0.01)   # 표시 루프 CPU 양보 (추론 스레드 우선)
         stop_flag["v"] = True
         th.join(timeout=1.5)
         profile["phases"][pname] = {"reid_emb": _avg_embed(embs),
+                                    "reid_embs": _pick_diverse(embs, 8),
                                     "color": _avg_color(cols)}
-        print(f"[register] {pname}: {len(embs)} 샘플 수집")
+        dur = time.time() - t_start
+        rx_fps = ((cam.rx_count() - rx_start) / dur) if hasattr(cam, "rx_count") else -1
+        print(f"[register] {pname}: {len(embs)} 샘플 수집 ({dur:.1f}초, 카메라 수신 {rx_fps:.1f}fps)")
+        DBG.log("register", phase=pname, n=len(embs), sec=round(dur, 1), rx_fps=round(rx_fps, 1))
+        if len(embs) < REG_MIN_SAMPLES:
+            print(f"[register] 경고: {pname} 샘플 {len(embs)}개뿐 — 인식률이 낮을 수 있습니다. "
+                  f"조명/거리(1~2m)를 확인하고 재촬영을 권장합니다.")
 
     speak_on_pi(pi_ip, "촬영이 끝났습니다.")
     save_profile(profile)
@@ -687,17 +887,28 @@ class DetectionWorker(threading.Thread):
                              "best_detail": best_detail, "best_ori": best_ori,
                              "det_ms": tm_det.getTimeMilli(),
                              "reid_ms": tm_reid.getTimeMilli(), "seq": self._seq}
+            # 검출 사이클 사이 CPU 양보 — 코어 적은 VM에서 표시/주행 스레드 멈춤 방지
+            time.sleep(0.03)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 추종 루프 (cv2.imshow 표시 + 인식률 % + 주행 연동)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
+def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
+                 just_registered=False):
     tracker = LF.TrackingState()
+    if just_registered:
+        tracker.warm_start()   # --register 직후에도 동일하게 빠른 진입
     kcf = LF.BoxTracker()
     kcf_age = 0
     frame_count = 0
+    none_n = 0        # 연속 프레임 미수신 카운터 (스트림 끊김 안전 정지용)
+    perf_t = time.time()          # 주기적 성능 스냅샷 타이머
+    perf_frames = 0
+    perf_rx0 = cam.rx_count() if hasattr(cam, "rx_count") else 0
+    pred_vx = 0.0                 # 등록자 수평 이동 속도 추정 (px/s, 예측 조향용)
+    prev_cx, prev_match_t = None, 0.0
     fps_t, fps_n, fps_val = time.time(), 0, 0.0
 
     avg = {"det": 0.0, "reid": 0.0}
@@ -709,6 +920,16 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
 
     worker = DetectionWorker(yolo, reid, face, profile, use_face)
     worker.start()
+
+    # KCF 보간 추적기 가용성 확인 (opencv-contrib 없으면 조용히 죽어 있던 문제 가시화)
+    try:
+        LF.BoxTracker._create()
+        kcf_env = True
+    except Exception:
+        kcf_env = False
+        print("[경고] OpenCV KCF 추적기 없음 → 검출 사이 bbox 보간 비활성 (마지막 위치 조향으로 대체 동작). "
+              "개선하려면 VM에서: pip install opencv-contrib-python")
+    DBG.log("env", kcf=kcf_env)
 
     print("=== 추종 시작 ===  (화면 'q' 종료 / 터미널 '복귀'·'추종' 입력으로 모드 전환)")
     prev_state = follower.state if follower is not None else "FOLLOW"
@@ -725,15 +946,39 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
             follower.state = "FOLLOW"
             set_robot_led(follower.esp_ip, "STANDBY")
             tracker.reset(); kcf.deinit(); reg_det_bbox = None
+            tracker.warm_start()   # 촬영 직후 = 대상이 바로 앞 → 탐색용 5프레임/0.70 대신 일반 기준으로 진입
             last_bboxes, last_scores = [], {}
             follower.reset_search()
             continue
 
         frame = cam.read()
         if frame is None:
+            # 스트림 끊김: 라이다 브리징 시도, 안 되면 정지 명령 (마지막 속도 유지 방지)
+            none_n += 1
+            if none_n == 5:
+                DBG.log("gap_start")
+            if follower is not None and none_n >= 5 and none_n % 5 == 0:
+                br = follower.lidar_bridge() if follower.state == "FOLLOW" else None
+                if br is not None:
+                    follower.send_velocity(*br)
+                else:
+                    follower.send_velocity(0.0, 0.0)
             time.sleep(0.02); continue
+        if none_n >= 5:
+            DBG.log("gap_end", n=none_n)
+        none_n = 0
         frame_count += 1
+        perf_frames += 1
         h_f, w_f = frame.shape[:2]
+
+        # 5초마다 성능 스냅샷 (루프 fps / 카메라 수신 fps / 추론 시간 이동평균)
+        now = time.time()
+        if now - perf_t >= 5.0:
+            rx = cam.rx_count() if hasattr(cam, "rx_count") else 0
+            DBG.log("perf", loop_fps=round(perf_frames / (now - perf_t), 1),
+                    rx_fps=round((rx - perf_rx0) / (now - perf_t), 1),
+                    det_ms=round(avg["det"], 1), reid_ms=round(avg["reid"], 1))
+            perf_t, perf_frames, perf_rx0 = now, 0, rx
 
         # [기능 2] 복귀(RETURN) 중엔 추종 연산 정지 (SLAM/Nav2 전용). FOLLOW→RETURN 전환 시 추적 리셋.
         cur_state = follower.state if follower is not None else "FOLLOW"
@@ -765,12 +1010,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                                       det["best_detail"], det["best_ori"])
             reid_ok = detail is not None and detail.get("reid", 0) >= LF.REID_FLOOR
             color_ok = detail is not None and detail.get("color", 0) >= LF.COLOR_FLOOR
+            # 진입(비추적) 임계값은 항상 SEARCH_MATCH_THR(0.70).
+            # 실측 점수가 0.70~0.72 사이라 MATCH_THRESHOLD(0.72)로는 진입 실패가 잦음.
+            # 엄격함은 임계값이 아니라 confirm 프레임 수(탐색발 5 / 등록직후 3)로 조절.
             if tracker.is_tracking:
                 thr = LF.KEEP_THRESHOLD
-            elif tracker.status == "searching":
-                thr = LF.SEARCH_MATCH_THR
             else:
-                thr = LF.MATCH_THRESHOLD
+                thr = LF.SEARCH_MATCH_THR
             matched = (bb is not None and total >= thr and reid_ok and color_ok)
             if matched:
                 tracker.update(True, bb, total)
@@ -778,6 +1024,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                 cur_label = f"{profile['user_id']} [{ori}] {cur_pct}%"
                 kcf.init(frame, bb); kcf_age = 0
                 draw_bbox = bb; reg_det_bbox = bb
+                # 예측 조향용 수평 속도 추정 (연속 매칭 간 cx 변화율, 지수평활)
+                t_m = time.time()
+                cx_m = (bb[0] + bb[2]) / 2.0
+                if prev_cx is not None and 0.05 < t_m - prev_match_t < 1.5:
+                    vx_now = (cx_m - prev_cx) / (t_m - prev_match_t)
+                    pred_vx = 0.6 * pred_vx + 0.4 * _clamp(vx_now, -PRED_MAX_VX, PRED_MAX_VX)
+                prev_cx, prev_match_t = cx_m, t_m
             else:
                 tracker.update(False)
                 kcf.deinit(); reg_det_bbox = None
@@ -787,6 +1040,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                       f"reid={detail['reid']*100:4.0f}% color={detail['color']*100:4.0f}% "
                       f"pos={detail['position']*100:4.0f}%  thr={thr*100:.0f}% "
                       f"=> {'MATCH' if matched else 'reject'} (cand={len(last_bboxes)})")
+            DBG.log("det", det_ms=round(det["det_ms"], 1), reid_ms=round(det["reid_ms"], 1),
+                    cand=len(last_bboxes), thr=thr, ok=matched,
+                    trk=tracker.is_tracking, st=tracker.status,
+                    total=round(total, 3) if detail is not None else None,
+                    reid=round(detail["reid"], 3) if detail is not None else None,
+                    color=round(detail["color"], 3) if detail is not None else None)
         elif interp_alive:
             kb = kcf.update(frame); kcf_age += 1
             if kb is not None:
@@ -834,18 +1093,28 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
         if follower is not None:
             if follower.state == "FOLLOW":
                 if tracker.is_tracking:
-                    v, w = follower.compute(draw_bbox, w_f, h_f, tracker.is_tracking)
+                    # 이번 프레임 bbox가 없으면(검출 간격/KCF 부재) 마지막 위치에
+                    # 수평 이동 속도(pred_vx)를 외삽해 '현재 추정 위치'로 조향
+                    # — 옛 위치로 가는 오조향과 검출 사이 멈칫거림 동시 방지
+                    steer_bbox = draw_bbox
+                    if steer_bbox is None and tracker.last_bbox is not None:
+                        lb = tracker.last_bbox
+                        dt_p = _clamp(time.time() - prev_match_t, 0.0, PRED_MAX_SEC) \
+                            if prev_match_t else 0.0
+                        sh = _clamp(pred_vx, -PRED_MAX_VX, PRED_MAX_VX) * dt_p
+                        steer_bbox = (lb[0] + sh, lb[1], lb[2] + sh, lb[3])
+                    v, w = follower.compute(steer_bbox, w_f, h_f, tracker.is_tracking)
                     follower.reset_search()      # 추종 중 → 탐색 종료
                 elif draw_bbox is not None:      # 재확인(confirm) 중 → 회전 말고 정지 대기
                     v, w = 0.0, 0.0
                     follower.reset_search()
-                else:                            # 완전 유실 → 좌우 탐색 회전
-                    # 소프트 매치(후보 스코어 0.63↑): 회전 멈추고 confirm 기회 부여
-                    if fresh and det["best_total"] > 0.63 and det["best_bbox"] is not None:
-                        v, w = 0.0, 0.0
-                        follower.reset_search()
-                    else:
-                        v, w = follower.search_rotate()
+                else:                            # 완전 유실 → 라이다 브리징, 안 되면 정지
+                    # 유실 직후 2초는 마지막 방위의 라이다 덩어리(사람 다리)를 따라가
+                    # 짧은 인식 공백을 메운다. (탐색 회전은 재인식 방해로 비활성 —
+                    # 다시 켜려면 v, w = follower.search_rotate())
+                    br = follower.lidar_bridge()
+                    v, w = br if br is not None else (0.0, 0.0)
+                    follower.reset_search()
                 
                 # 사람이 인식되면 초록불(RUNNING), 인식되지 않으면(유실/재확인 포함) 즉시 노란불(STANDBY)
                 if draw_bbox is not None:
@@ -853,8 +1122,16 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                 else:
                     set_robot_led(follower.esp_ip, "STANDBY")
                     
-                if frame_count % 3 == 0:        # ≈10Hz publish (매프레임 publish 오버헤드 방지)
-                    follower.send_velocity(v, w)
+                # 매 루프 발행(~15-20Hz) — 가속도 필터가 있어 급변 없이 촘촘하게 갱신
+                follower.send_velocity(v, w)
+                if frame_count % 3 == 0:        # 로그는 ≈5-7Hz로 샘플링
+                    err_c = (((draw_bbox[0] + draw_bbox[2]) / 2 - w_f / 2) / (w_f / 2)
+                             if draw_bbox is not None else None)
+                    DBG.log("cmd", v=round(follower.last_v, 3), w=round(follower.last_w, 3),
+                            dist=round(follower.last_dist_cm, 1),
+                            mode=getattr(follower, "_dist_mode", "?"),
+                            err=round(err_c, 3) if err_c is not None else None,
+                            trk=tracker.is_tracking)
                 dist_mode = getattr(follower, "_dist_mode", "?")
                 cv2.putText(frame,
                             f"WHEEL v={v:+.2f} w={w:+.2f} dist={follower.last_dist_cm:.0f}cm [{dist_mode}]",
@@ -928,9 +1205,15 @@ def parse_args():
     p.add_argument("--esp-ip", default=None, help="ESP8266 (RFID & LED) IP 주소 (예: 192.168.0.xx)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
-    p.add_argument("--imgsz", type=int, default=320,
-                   help="YOLO 입력 크기(192/256/320). VM 추론이라 320 권장")
-    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--imgsz", type=int, default=256,
+                   help="YOLO 입력 크기(192/256/320). 기본 256 — 실측상 192는 사람이 "
+                        "작게 잡혀 검출 실패(606회 중 17회만 검출), 320은 447ms로 느림")
+    p.add_argument("--reid-model", choices=["x0_25", "x1_0"], default="x1_0",
+                   help="ReID 모델. 기본 x1_0(변별력 우수). 4코어+192px 기준 감당 가능. "
+                        "너무 느리면 x0_25. 모델을 바꾸면 프로필 재등록 필요")
+    p.add_argument("--threads", type=int, default=0,
+                   help="onnxruntime 스레드 수. 0=자동(코어수-1, 최대 4) — "
+                        "코어보다 크게 주면 스레드 경합으로 화면이 멈춤")
     p.add_argument("--register", action="store_true", help="등록(앞/뒤) 후 추종")
     p.add_argument("--reset", action="store_true", help="기존 프로필 삭제 후 등록")
     p.add_argument("--user-id", default="owner_001")
@@ -938,6 +1221,13 @@ def parse_args():
     p.add_argument("--grace", type=float, default=5.0, help="촬영 시작 전 준비 시간(초)")
     p.add_argument("--no-drive", action="store_true",
                    help="ROS2 주행 비활성(인식만 확인). cmd_vel/Nav2 미사용")
+    p.add_argument("--invert-turn", action="store_true",
+                   help="회전 방향 반전 (모터가 반대로 돌 때). --mirror 와 동시 사용 금지")
+    p.add_argument("--mirror", action="store_true",
+                   help="카메라 영상 좌우반전 보정 (영상이 거울상일 때). "
+                        "라이다 방위까지 일관되게 맞음 — 반대 회전의 근본 해결책")
+    p.add_argument("--no-debug-log", action="store_true",
+                   help="디버그 로그(debug_logs/run_*.jsonl) 기록 비활성화")
     return p.parse_args()
 
 
@@ -945,16 +1235,31 @@ def main() -> int:
     args = parse_args()
     stream_url = args.stream_url or f"http://{args.pi_ip}:5000/video_feed"
 
+    global DBG
+    DBG = DebugLog(enabled=not args.no_debug_log)
+    if DBG.path:
+        print(f"[debug] 로그 기록: {DBG.path} (분석: python3 analyze_debug.py)")
+    DBG.log("start", imgsz=args.imgsz, reid_model=args.reid_model,
+            mirror=args.mirror, invert_turn=args.invert_turn,
+            cpu=os.cpu_count())
+
     print("[init] 모델 로딩...")
+    if args.threads <= 0:
+        # 코어 수보다 많은 스레드는 경합만 유발 (특히 코어 적은 VM에서 화면 멈춤)
+        args.threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+    print(f"[init] CPU 코어={os.cpu_count()}, onnx threads={args.threads}")
     yolo_path, yolo_sz = pick_yolo_onnx(args.imgsz)
     print(f"[init] YOLO={yolo_path.name} imgsz={yolo_sz}")
     yolo = OnnxYolo(str(yolo_path), imgsz=yolo_sz, threads=args.threads)
-    reid = OnnxReID(str(REID_ONNX), threads=args.threads)
+    global REID_MODEL_NAME
+    REID_MODEL_NAME = args.reid_model
+    reid_path = MODELS_DIR / f"osnet_{args.reid_model}.onnx"
+    reid = OnnxReID(str(reid_path), threads=args.threads)
     face = FaceOrient(str(YUNET_ONNX) if not args.no_face else None)
-    print(f"[init] YOLO/ReID OK, face={face.mode}")
+    print(f"[init] YOLO/ReID OK (ReID={reid_path.name}), face={face.mode}")
 
     print(f"[cam] 분산 MJPEG 연결: {stream_url}")
-    cam = MjpegCamera(stream_url)
+    cam = MjpegCamera(stream_url, mirror=args.mirror)
     time.sleep(1.0)
     if cam.read() is None:
         print(f"[오류] 스트림({stream_url}) 프레임 수신 실패. "
@@ -970,7 +1275,8 @@ def main() -> int:
                   "source /opt/ros/humble/setup.bash 후 재실행하면 주행됩니다.")
         else:
             rclpy.init()
-            follower = RobotController(esp_ip=args.esp_ip, pi_ip=args.pi_ip)
+            follower = RobotController(esp_ip=args.esp_ip, pi_ip=args.pi_ip,
+                                       ang_sign=-1.0 if args.invert_turn else 1.0)
             ex = rclpy.executors.MultiThreadedExecutor()
             ex.add_node(follower)
             threading.Thread(target=ex.spin, daemon=True).start()
@@ -980,7 +1286,13 @@ def main() -> int:
     if args.reset and PROFILE_PATH.exists():
         PROFILE_PATH.unlink()
     profile = load_profile()
-    
+
+    # 다른 ReID 모델로 만든 프로필은 임베딩 공간이 달라 매칭 불가 → 폐기
+    if profile and profile.get("reid_model", "x1_0") != args.reid_model:
+        print(f"[profile] ReID 모델 불일치(프로필={profile.get('reid_model', 'x1_0')}, "
+              f"현재={args.reid_model}) → 기존 프로필 폐기. 재등록이 필요합니다.")
+        profile = None
+
     if args.register:
         profile = register(cam, yolo, reid, args.user_id, grace_sec=args.grace, pi_ip=args.pi_ip)
     elif profile is None:
@@ -993,7 +1305,8 @@ def main() -> int:
 
     try:
         run_tracking(cam, yolo, reid, face, profile,
-                     use_face=not args.no_face, follower=follower)
+                     use_face=not args.no_face, follower=follower,
+                     just_registered=args.register)
     except KeyboardInterrupt:
         print("\n[종료]")
     finally:

@@ -25,10 +25,15 @@ W_POSITION = 0.05
 
 # ── 임계값 ────────────────────────────────────────────────────────────────────
 # REID_FLOOR 가 타인 차단의 핵심 하드게이트(색상과 무관하게 ReID 낮으면 즉시 탈락).
-MATCH_THRESHOLD    = 0.72   # 추적 시작
-SEARCH_MATCH_THR   = 0.70   # 완전 유실 탐색 중 재인식 임계값
-KEEP_THRESHOLD     = 0.62   # 추적 유지
-REID_FLOOR         = 0.55   # ReID 하한 (미만이면 무조건 비등록자) — 0.50→0.55 강화
+# 임계값 재보정: 기존 값은 osnet_x1_0 기준 튜닝. x0_25는 임베딩 변별력이 낮아
+# 완화하되, 과하게 낮추면(0.60/0.42) 타인·오검출을 추종하는 부작용 → 중간값으로 상향
+# 2026-07-07 재설정: ReID x1_0 + 다중 임베딩 max 매칭 조합 기준.
+# 다중 매칭은 본인 점수를 끌어올리므로(자세별 대표 샘플과 비교) 기준을 다시 세움.
+# 다음 debug 로그의 [score] 분포로 재보정할 것.
+MATCH_THRESHOLD    = 0.70   # 추적 시작
+SEARCH_MATCH_THR   = 0.68   # 완전 유실 탐색 중 재인식 임계값
+KEEP_THRESHOLD     = 0.58   # 추적 유지
+REID_FLOOR         = 0.52   # ReID 하한 (미만이면 무조건 비등록자)
 COLOR_FLOOR        = 0.15   # 색상 하한 (0.30→0.15: ReID 신뢰도 높아 색상 게이트 완화)
 LOST_MAX           = 20     # 유실 허용 프레임
 SCORE_WINDOW       = 10     # 이동 평균 창
@@ -83,9 +88,20 @@ def hist_corr(a, b) -> float:
     return max(0.0, float(cv2.compareHist(va, vb, cv2.HISTCMP_CORREL)))
 
 
+def _best_reid_score(ref, cand_emb) -> float:
+    """다중 임베딩(reid_embs) 중 최고 유사도. 구버전 프로필은 평균(reid_emb)만 사용.
+    평균 1개는 자세 변화에 취약 — 대표 샘플들과의 max 매칭이 훨씬 안정적."""
+    best = cosine(ref.get("reid_emb"), cand_emb)
+    for e in ref.get("reid_embs") or []:
+        s = cosine(e, cand_emb)
+        if s > best:
+            best = s
+    return best
+
+
 def score_against_profile(ref, cand, last_bbox, cand_bbox, frame_shape):
     """등록 특징(ref) vs 후보(cand) → (총점, 세부점수)."""
-    reid_sc = cosine(ref.get("reid_emb"), cand.get("reid_emb"))
+    reid_sc = _best_reid_score(ref, cand.get("reid_emb"))
     color_sc = (
         hist_corr(ref["color"]["top_hist"], cand["color"]["top_hist"]) +
         hist_corr(ref["color"]["bot_hist"], cand["color"]["bot_hist"])
@@ -121,6 +137,15 @@ class TrackingState:
     @property
     def avg_score(self) -> float:
         return float(np.mean(list(self._history))) if self._history else 0.0
+
+    @property
+    def from_search(self) -> bool:
+        """탐색발 재인식 진행 중인지 (confirm 프레임 수/임계값 선택 기준)."""
+        return self._from_search
+
+    def warm_start(self) -> None:
+        """등록·촬영 직후처럼 대상이 확실히 앞에 있을 때: 탐색 게이트(5프레임/0.70) 대신 일반 기준(3프레임/0.72)으로 진입."""
+        self._from_search = False
 
     def reset(self) -> None:
         """추적 상태 즉시 초기화 (모드 전환 등에서 잔류 추적 제거)."""
