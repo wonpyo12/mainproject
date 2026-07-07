@@ -2,7 +2,7 @@
 # 처음부터: tracker 정지 → web_stream(annotated) 확인 → 등록 노드 시작
 source /opt/ros/humble/setup.bash
 source ~/robocart_ws/install/setup.bash
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 
 # 1) tracker 정지 (등록 중 카메라/화면 충돌 방지)
 pkill -9 -f "robocart_tracker.tracker_node" 2>/dev/null

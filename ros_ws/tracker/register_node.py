@@ -13,7 +13,7 @@
 실행 (WSL):
   source /opt/ros/humble/setup.bash
   source ~/robocart_ws/install/setup.bash   # 불필요(코어만 쓰면) 하지만 무해
-  export ROS_DOMAIN_ID=30
+  export ROS_DOMAIN_ID=0
   cd ~/robocart_run
   python3 register_node.py                   # 기본 ID: owner_001 (덮어씀)
   python3 register_node.py --user-id owner_002

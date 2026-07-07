@@ -2,7 +2,7 @@
 # 모든 tracker 인스턴스를 확실히 종료하고 정확히 1개만 실행
 source /opt/ros/humble/setup.bash
 source ~/robocart_ws/install/setup.bash
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 
 # 0이 될 때까지 반복 종료 (pkill 자기매칭 회피 위해 PID 직접 kill)
 for round in 1 2 3 4 5; do

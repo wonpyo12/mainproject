@@ -14,7 +14,7 @@ mirrored 네트워킹이면 WSL에서 띄워도 Windows 브라우저에서 local
 
 실행 (WSL):
   source /opt/ros/humble/setup.bash
-  export ROS_DOMAIN_ID=30
+  export ROS_DOMAIN_ID=0
   python3 web_stream_node.py
   # 원본 카메라를 보고 싶으면:
   python3 web_stream_node.py --ros-args -p topic:=/image/compressed

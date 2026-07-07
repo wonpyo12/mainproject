@@ -2,7 +2,7 @@
 # 모든 tracker 확실히 종료 → web_stream 보장 → 등록 노드 foreground 실행
 source /opt/ros/humble/setup.bash
 source ~/robocart_ws/install/setup.bash
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 
 # tracker 0 될 때까지 반복 종료
 for round in 1 2 3 4 5 6; do

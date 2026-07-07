@@ -3,7 +3,7 @@
 set +e
 source /opt/ros/humble/setup.bash
 source ~/robocart_ws/install/setup.bash
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 
 pkill -9 -f "robocart_tracker.tracker_node" 2>/dev/null
 sleep 2

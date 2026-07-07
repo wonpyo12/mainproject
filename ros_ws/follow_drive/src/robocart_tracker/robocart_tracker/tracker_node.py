@@ -16,9 +16,9 @@
   data/ (등록된 사용자 프로필)   ← Windows에서 등록 후 복사, 또는 --register 로 생성
   yolov8n.pt                    ← 저장소 OpenCV/Opencv/ 에서 복사
 
-실행 (노트북, Pi와 같은 Wi-Fi · 같은 ROS_DOMAIN_ID=30):
+실행 (노트북, Pi와 같은 Wi-Fi · 같은 ROS_DOMAIN_ID=0):
   source /opt/ros/humble/setup.bash
-  export ROS_DOMAIN_ID=30
+  export ROS_DOMAIN_ID=0
   cd <smart_cart_core.py 있는 폴더>
   ros2 run robocart_tracker tracker_node
   # 회전 방향이 반대면:

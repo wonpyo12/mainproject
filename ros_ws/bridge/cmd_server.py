@@ -18,7 +18,7 @@ WSL 없이 Windows 파이썬에서 노트북 추적을 돌리기 위함.
 실행 (라파):
   source /opt/ros/humble/setup.bash
   source ~/ros2_ws/test0615/install/setup.bash
-  export ROS_DOMAIN_ID=30
+  export ROS_DOMAIN_ID=0
   python3 cmd_server.py
 """
 import socket
