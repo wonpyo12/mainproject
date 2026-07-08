@@ -229,8 +229,8 @@ ALLOW_REVERSE = True
 FRONT_STOP_M = 0.25      # 전방 라이다 이 거리 이내 장애물이면 전진 0 (안전)
 
 # 유실 탐색: 등록자 놓치면 제자리서 좌우 교대 저속 회전(v=0)으로 재탐색
-SEARCH_ANG         = 0.18  # 탐색 회전 각속도(rad/s) — 재발견 속도/오인식(SEARCH_CONFIRM 5프레임 게이트) 절충
-SEARCH_HALF_PERIOD = 3.0   # 한 방향 회전 지속(초) — 이 주기로 좌↔우 반전
+SEARCH_ANG         = 0.20   # 탐색 회전 각속도(rad/s)
+SEARCH_HALF_PERIOD = 15.7   # 한 방향 회전 지속(초) — 좌우 180도(π rad) 회전: π/SEARCH_ANG ≈ 15.7초
 SEARCH_START_DELAY = 5.0   # 유실 후 이 시간(초) 동안은 정지 대기, 넘겨야 탐색 회전 시작
 
 # 등록 촬영: 방향(front/back)당 최소 샘플 수 — 미달이면 REG_MAX_SEC까지 수집 연장
