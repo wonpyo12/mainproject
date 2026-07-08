@@ -251,11 +251,6 @@ private fun ChatbotFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center
         ) {
             Mascot(width = 32.dp, mood = "wave", onLight = true)
-            Box(
-                Modifier.align(Alignment.BottomEnd).offset(x = (-3).dp, y = (-3).dp)
-                    .size(12.dp).clip(CircleShape).background(Green)
-                    .border(2.dp, Surface, CircleShape)
-            )
         }
         Spacer(Modifier.width(11.dp))
         Column {
