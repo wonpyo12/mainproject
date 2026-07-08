@@ -48,6 +48,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -1275,8 +1279,22 @@ private fun SplashScreen(onDone: () -> Unit) {
                 Mascot(width = 112.dp, mood = "wave", onLight = true)
             }
             Spacer(Modifier.height(28.dp))
-            Text("CartMe", fontSize = 42.sp, fontWeight = FontWeight.Black, color = Navy,
-                letterSpacing = (-1).sp)
+            // a3.png 로고 스타일 — 통통한 라운드체(Fredoka One) + 남색 외곽선 + 옐로 그라데이션
+            val bubbleFont = FontFamily(Font(com.example.R.font.fredoka_one))
+            Box {
+                // 외곽선 + 그림자 레이어
+                Text("CartMe", fontSize = 46.sp, fontFamily = bubbleFont,
+                    color = Color(0xFF17253F),
+                    style = TextStyle(
+                        drawStyle = Stroke(width = 30f, join = StrokeJoin.Round, cap = StrokeCap.Round),
+                        shadow = Shadow(color = Color(0xFF17253F).copy(alpha = 0.30f),
+                            offset = Offset(0f, 10f), blurRadius = 16f),
+                    ))
+                // 옐로(브랜드 앰버) 그라데이션 채움 레이어
+                Text("CartMe", fontSize = 46.sp, fontFamily = bubbleFont,
+                    style = TextStyle(brush = Brush.verticalGradient(
+                        listOf(Color(0xFFFFD95E), Color(0xFFF2A81D)))))
+            }
             Spacer(Modifier.height(10.dp))
             Text("나를 따라오는 스마트 카트", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 color = TextSub)
