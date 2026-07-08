@@ -1307,7 +1307,8 @@ private fun LoginScreen(
     val focus = LocalFocusManager.current
 
     Box(Modifier.fillMaxSize().background(Surface)) {
-        Box(Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 18.dp).width(118.dp)) {
+        // 타이틀("다시 만나서\n반가워요", top 96dp)과 상단 높이를 맞춘다.
+        Box(Modifier.align(Alignment.TopEnd).padding(top = 96.dp, end = 24.dp).width(118.dp)) {
             Mascot(width = 118.dp, mood = "idle", ring = Color(0xFFBFD8FF), onLight = true)
         }
         Column(
