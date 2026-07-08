@@ -1279,21 +1279,21 @@ private fun SplashScreen(onDone: () -> Unit) {
                 Mascot(width = 112.dp, mood = "wave", onLight = true)
             }
             Spacer(Modifier.height(28.dp))
-            // a3.png 로고 스타일 — 통통한 라운드체(Fredoka One) + 남색 외곽선 + 옐로 그라데이션
+            // a3.png 로고 스타일 — 통통한 라운드체(Fredoka One) + 얇은 남색 외곽선 + 연한 옐로 그라데이션
             val bubbleFont = FontFamily(Font(com.example.R.font.fredoka_one))
             Box {
-                // 외곽선 + 그림자 레이어
+                // 외곽선 + 그림자 레이어 (얇고 연하게)
                 Text("CartMe", fontSize = 46.sp, fontFamily = bubbleFont,
-                    color = Color(0xFF17253F),
+                    color = Color(0xFF3A4A6B),
                     style = TextStyle(
-                        drawStyle = Stroke(width = 30f, join = StrokeJoin.Round, cap = StrokeCap.Round),
-                        shadow = Shadow(color = Color(0xFF17253F).copy(alpha = 0.30f),
-                            offset = Offset(0f, 10f), blurRadius = 16f),
+                        drawStyle = Stroke(width = 14f, join = StrokeJoin.Round, cap = StrokeCap.Round),
+                        shadow = Shadow(color = Color(0xFF3A4A6B).copy(alpha = 0.18f),
+                            offset = Offset(0f, 6f), blurRadius = 10f),
                     ))
-                // 옐로(브랜드 앰버) 그라데이션 채움 레이어
+                // 연한 옐로 그라데이션 채움 레이어
                 Text("CartMe", fontSize = 46.sp, fontFamily = bubbleFont,
                     style = TextStyle(brush = Brush.verticalGradient(
-                        listOf(Color(0xFFFFD95E), Color(0xFFF2A81D)))))
+                        listOf(Color(0xFFFFE9A3), Color(0xFFFFC94D)))))
             }
             Spacer(Modifier.height(10.dp))
             Text("나를 따라오는 스마트 카트", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
