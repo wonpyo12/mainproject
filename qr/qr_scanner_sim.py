@@ -81,7 +81,7 @@ threading.Thread(target=start_camera_server, daemon=True).start()
 
 # 백엔드 서버 URL 및 로봇 시리얼 넘버 설정
 # (모바일 기기와 PC가 동일한 와이파이에 있는 경우 localhost 대신 PC의 사설 IP를 적어주세요. 예: 192.168.0.X)
-SERVER_URL = "http://192.168.0.29:3000/api/hardware/qr-scan"
+SERVER_URL = "http://192.168.0.30:3000/api/hardware/qr-scan"
 ROBOT_SERIAL = "CartMe-ROS2-08"
 
 # 웹캠 초기화 (0번 기본 카메라)

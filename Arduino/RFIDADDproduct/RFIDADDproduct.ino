@@ -21,7 +21,7 @@ const char* ssid     = "test1111";
 const char* password = "12345678";
 
 // ── 서버 URL 설정 (RFID 태그 전송용) ───────────────
-const char* serverURL = "http://192.168.0.29:3000/api/hardware/rfid";
+const char* serverURL = "http://192.168.0.30:3000/api/hardware/rfid";
 const char* robotSerialNumber = "CartMe-ROS2-08";
 
 // 동일 카드 연속 스캔 방지 (디바운스) 변수
