@@ -17,7 +17,7 @@ const char* password = "48864886";
 // ── 서버 URL 설정 ───────────────────────────────
 // PC의 로컬 IP로 변경하세요 (예: 192.168.0.10)
 // cmd에서 ipconfig 실행 후 IPv4 주소 확인
-const char* serverURL = "http://YOUR_LOCAL_IP:3000/api/hardware/rfid";
+const char* serverURL = "http://192.168.0.9:3000/api/hardware/rfid";
 const char* robotSerialNumber = "CartMe-ROS2-08";
 
 // 동일 카드 연속 스캔 방지 (디바운스) 변수
