@@ -1,6 +1,6 @@
 // [MySQL] mysql2/promise 커넥션 풀 - Spring Boot와 동일한 cartpilot_db 공유
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
 const pool = mysql.createPool({
   host:     process.env.DB_HOST     || 'localhost',

@@ -3,8 +3,8 @@
     {
       "id": "ROBOT-001",
       "status": "following",
-      "user": "김태우",
-      "userId": "kw",
+      "user": "사용자",
+      "userId": "user1",
       "zone": "B · 주행 트랙",
       "battery": 84,
       "x": 13.51,
@@ -60,6 +60,6 @@
     "name": "카트파일럿 데모 샵"
   },
   "userInfo": {
-    "name": "관리자 문규석"
+    "name": "관리자"
   }
 }
