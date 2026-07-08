@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 런처 아이콘 배경 — CartMe 브랜드 앰버 -->
+    <color name="ic_launcher_background">#F8C038</color>
+</resources>
