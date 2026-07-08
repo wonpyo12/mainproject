@@ -92,7 +92,7 @@ export function DashboardView({ selected, setSelected, robots = [], alerts = [],
               </div>
               <dl style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 12px', margin: '16px 0' }}>
                 {[
-                  sel.user ? ['이용자', `${sel.user} · ${sel.userId}`] : null,
+                  ['이용자', sel.user ? `${sel.user} · ${sel.userId}` : '사용자 없음'],
                   sel.zone ? ['현재 구역', sel.zone] : null,
                   sel.items != null ? ['담은 상품', sel.items + '개'] : null,
                   sel.battery != null ? ['배터리', null] : null,
