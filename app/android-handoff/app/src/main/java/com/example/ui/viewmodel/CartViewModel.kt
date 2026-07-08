@@ -43,6 +43,9 @@ data class CartUiState(
     val qrToken: String = "",
     // 쇼핑
     val shoppingList: List<CartItem> = emptyList(),
+    // 구매 내역
+    val orderHistory: List<OrderRecord> = emptyList(),
+    val isHistoryLoading: Boolean = false,
     // UI 상태
     val isLoading: Boolean = false,
     val errorMessage: String = "",
@@ -245,6 +248,28 @@ class CartViewModel : ViewModel() {
                     errorMessage = "결제 처리 중 오류가 발생했습니다.",
                     isLoading = false,
                 )
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 구매 내역: GET /api/orders/history
+    // ──────────────────────────────────────────────────────
+    fun fetchOrderHistory() {
+        val token = _uiState.value.token
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isHistoryLoading = true)
+            try {
+                val response = api.getOrderHistory("Bearer $token")
+                _uiState.value = _uiState.value.copy(
+                    orderHistory = if (response.success) response.orders else emptyList(),
+                    isHistoryLoading = false,
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchOrderHistory error", e)
+                _uiState.value = _uiState.value.copy(isHistoryLoading = false)
+                showVoice("구매 내역을 불러오지 못했어요.")
             }
         }
     }

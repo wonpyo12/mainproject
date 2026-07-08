@@ -25,6 +25,12 @@ interface ApiService {
         @Body request: CompleteOrderRequest,
     ): CompleteOrderResponse
 
+    // [MySQL] 유저 주문 이력 조회
+    @GET("api/orders/history")
+    suspend fun getOrderHistory(
+        @Header("Authorization") authHeader: String,
+    ): OrderHistoryResponse
+
     // [로봇] 정지 — 그 자리 래치 정지(HALT)
     @POST("api/robot/stop")
     suspend fun stopRobot(

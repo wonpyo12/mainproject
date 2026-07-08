@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.network.OrderRecord
 import com.example.ui.viewmodel.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -154,7 +155,8 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     PairScreen(
                         uiState = uiState,
                         onGenerateQR = { viewModel.generateQR() },
-                        onLogout = { viewModel.logout() }
+                        onLogout = { viewModel.logout() },
+                        onFetchHistory = { viewModel.fetchOrderHistory() }
                     )
                 }
                 Screen.SHOPPING -> ShoppingScreen(
@@ -1477,14 +1479,21 @@ private fun PairScreen(
     uiState: CartUiState,
     onGenerateQR: () -> Unit,
     onLogout: () -> Unit,
+    onFetchHistory: () -> Unit,
 ) {
+    var showHistory by remember { mutableStateOf(false) }
+
     Box(Modifier.fillMaxSize().background(ScreenBg)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(start = 26.dp, end = 26.dp, top = 16.dp, bottom = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically) {
+                // 구매 내역 메뉴 버튼
+                HistoryChip { onFetchHistory(); showHistory = true }
+                Spacer(Modifier.width(8.dp))
                 LogoutChip(onLogout)
             }
             Spacer(Modifier.height(6.dp))
@@ -1541,6 +1550,11 @@ private fun PairScreen(
                 onClick = onGenerateQR,
                 leadingIcon = Icons.Filled.Refresh
             )
+        }
+
+        // 구매 내역 오버레이 — 헤더의 영수증(메뉴) 버튼으로 열기
+        if (showHistory) {
+            OrderHistoryPanel(uiState, onClose = { showHistory = false })
         }
     }
 }
@@ -1613,6 +1627,114 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                 Spacer(Modifier.height(14.dp))
                 PrimaryButton("결제하기", onCheckout, enabled = uiState.shoppingList.isNotEmpty(), height = 52.dp)
             }
+        }
+    }
+}
+
+/* ============================================================
+ *  ORDER HISTORY — 구매 내역 (나의 카트 메뉴)
+ * ============================================================ */
+@Composable
+private fun HistoryChip(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+            .background(Surface)
+            .border(1.5.dp, Navy, RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Filled.ReceiptLong, contentDescription = "구매 내역",
+            tint = Navy, modifier = Modifier.size(19.dp))
+    }
+}
+
+// "2026-07-08T05:10:02.000Z" → "2026.07.08 14:10" (로컬 시간)
+private fun formatOrderedAt(iso: String): String = runCatching {
+    java.time.OffsetDateTime.parse(iso)
+        .atZoneSameInstant(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm"))
+}.getOrElse { iso.take(10) }
+
+@Composable
+private fun OrderHistoryPanel(uiState: CartUiState, onClose: () -> Unit) {
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
+        Column(Modifier.fillMaxSize()) {
+            // 헤더
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 22.dp, top = 14.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(2.dp))
+                Text("구매 내역", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
+            }
+
+            when {
+                uiState.isHistoryLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("구매 내역을 불러오는 중...", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextSub)
+                }
+                uiState.orderHistory.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = TextFaint, modifier = Modifier.size(44.dp))
+                        Spacer(Modifier.height(10.dp))
+                        Text("아직 구매 내역이 없어요", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextSub)
+                    }
+                }
+                else -> Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
+                        .padding(horizontal = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Spacer(Modifier.height(4.dp))
+                    uiState.orderHistory.forEach { order -> OrderHistoryCard(order) }
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderHistoryCard(order: OrderRecord) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(RCard)).background(Surface)
+            .border(1.5.dp, Navy, RoundedCornerShape(RCard))
+            .padding(horizontal = 18.dp, vertical = 15.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(formatOrderedAt(order.orderedAt), fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = TextSub)
+            val statusLabel = when (order.paymentStatus) {
+                "PAID", "COMPLETED" -> "결제 완료"
+                else -> order.paymentStatus ?: ""
+            }
+            if (statusLabel.isNotBlank()) {
+                Text(statusLabel, fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = AmberInk,
+                    modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(BlueSoft)
+                        .padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        order.items.forEach { item ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("${item.productName} × ${item.quantity}", fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold, color = Navy)
+                Text("${won((item.unitPrice * item.quantity).toInt())}원", fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, color = Navy)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("총 결제금액", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextSub)
+            Text("${won(order.totalPrice.toInt())}원", fontSize = 17.sp, fontWeight = FontWeight.Black, color = Navy)
         }
     }
 }

@@ -66,6 +66,27 @@ data class CompleteOrderResponse(
     val totalPrice: Int?,
 )
 
+// ── 구매 내역 (GET /api/orders/history) ────────────────────────
+data class OrderHistoryResponse(
+    val success: Boolean,
+    val orders: List<OrderRecord> = emptyList(),
+)
+
+data class OrderRecord(
+    val orderId: Int,
+    val totalPrice: Double,      // MySQL DECIMAL 은 "12000.00" 문자열로 올 수 있어 Double 로 수신
+    val paymentStatus: String?,
+    val orderedAt: String,
+    val items: List<OrderRecordItem> = emptyList(),
+)
+
+data class OrderRecordItem(
+    val productId: Int,
+    val productName: String,
+    val quantity: Int,
+    val unitPrice: Double,
+)
+
 // ── WebSocket 이벤트 ───────────────────────────────────────────
 data class CartUpdatedEvent(
     val items: List<ServerCartItem>,
