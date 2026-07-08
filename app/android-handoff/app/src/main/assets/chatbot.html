@@ -410,6 +410,8 @@
        </div>`;
     chips.appendChild(form);
     const ta = document.getElementById('inqText');
+    // 키보드가 올라와 뷰포트가 줄어든 뒤 입력창이 가려지지 않게 화면 안으로 스크롤
+    ta.addEventListener('focus', ()=> setTimeout(()=> ta.scrollIntoView({block:'nearest'}), 300));
     ta.focus();
     document.getElementById('inqCancel').onclick = ()=>{ renderMenu(); };
     document.getElementById('inqSend').onclick = async ()=>{

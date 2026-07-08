@@ -287,7 +287,9 @@ private fun SupportScreen(token: String, userName: String, onBack: () -> Unit) {
             "&name=" + enc(userName)
     }
 
-    Column(Modifier.fillMaxSize().background(ScreenBg)) {
+    // enableEdgeToEdge 환경에선 adjustResize 가 무시되므로 imePadding 으로
+    // 키보드 높이만큼 화면을 줄여야 하단 문의 입력창이 키보드에 가려지지 않는다.
+    Column(Modifier.fillMaxSize().background(ScreenBg).imePadding()) {
         // 상단 바
         Row(
             modifier = Modifier.fillMaxWidth().background(Surface)

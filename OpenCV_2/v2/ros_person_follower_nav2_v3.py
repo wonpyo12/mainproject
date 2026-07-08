@@ -537,8 +537,10 @@ if _ROS2_OK:
         def _nav_done_cb(self, future):
             self._nav_goal_handle = None
             if self.state == "RETURN":       # 사용자가 이미 '추종'으로 전환했으면 유지
-                self.get_logger().info("원점 도착 → FOLLOW 모드 자동 전환.")
-                self.state = "FOLLOW"
+                self.get_logger().info("원점 도착 → 정지(STOPPED) 상태로 자동 전환 (대기 모드). LED 빨간불.")
+                self.state = "STOPPED"
+                self.send_stop()
+                set_robot_led(self.esp_ip, "STOPPED")
 
         def cancel_nav(self):
             """진행 중인 Nav2 복귀 목표 취소 (/cmd_vel 중복 발행 방지)."""

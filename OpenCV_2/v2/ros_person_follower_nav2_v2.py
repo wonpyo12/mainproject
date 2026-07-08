@@ -348,8 +348,10 @@ if _ROS2_OK:
             gh.get_result_async().add_done_callback(self._nav_done_cb)
 
         def _nav_done_cb(self, future):
-            self.get_logger().info("원점 도착 → FOLLOW 모드 자동 전환.")
-            self.state = "FOLLOW"
+            self.get_logger().info("원점 도착 → 정지(STOPPED) 상태로 자동 전환 (대기 모드). LED 빨간불.")
+            self.state = "STOPPED"
+            self.send_stop()
+            set_robot_led(self.esp_ip, "STOPPED")
 
 else:
     RobotController = None   # type: ignore

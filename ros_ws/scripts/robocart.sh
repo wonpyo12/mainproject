@@ -21,7 +21,7 @@ PORT=8090
 PI_IP="${PI_IP:-192.168.0.3}"
 PI_CAM_URL="${PI_CAM_URL:-http://$PI_IP:$PORT/stream}"
 
-src() { source "$ROS_SETUP"; [ -f "$WS_SETUP" ] && source "$WS_SETUP"; export ROS_DOMAIN_ID=30; }
+src() { source "$ROS_SETUP"; [ -f "$WS_SETUP" ] && source "$WS_SETUP"; export ROS_DOMAIN_ID=0; }
 
 # 패턴에 해당하는 프로세스를 0이 될 때까지 확실히 종료 (자기 자신 제외)
 kill_all() {

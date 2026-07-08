@@ -17,7 +17,7 @@ PI = os.environ.get("PI_HOST", "YOUR_PI_IP")
 USER = os.environ.get("PI_USER", "ubuntu")
 PW = os.environ.get("PI_PASSWORD", "YOUR_PI_PASSWORD")
 
-SETUP = "source /opt/ros/humble/setup.bash; source ~/ros2_ws/test0615/install/setup.bash; export ROS_DOMAIN_ID=30"
+SETUP = "source /opt/ros/humble/setup.bash; source ~/ros2_ws/test0615/install/setup.bash; export ROS_DOMAIN_ID=0"
 
 
 def run(cmd, timeout=40):

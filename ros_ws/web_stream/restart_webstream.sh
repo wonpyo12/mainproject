@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 모든 web_stream 확실히 종료 후 1개만 시작 (원본 카메라 직접 구독)
 source /opt/ros/humble/setup.bash
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 
 cp /mnt/d/YH/ros_ws/web_stream/web_stream_node.py ~/web_stream_node.py
 

@@ -12,7 +12,7 @@
 ## 아키텍처
 
 ```
-[Raspberry Pi  ROS_DOMAIN_ID=30]                  [Notebook  ROS2 Humble, DOMAIN_ID=30]
+[Raspberry Pi  ROS_DOMAIN_ID=0]                  [Notebook  ROS2 Humble, DOMAIN_ID=0]
  /dev/video0
    └ camera_node ──/image/compressed(JPEG)─────────▶ tracker_node
                                                        ├ smart_cart_core.run_tracking()  (무수정)
@@ -64,7 +64,7 @@ Arduino IDE에서 `firmware/esp32_scan_motor/esp32_scan_motor.ino` 열기 →
 cd ~/ros2_ws/test0615
 colcon build --packages-select robocart_pi
 source install/setup.bash
-export ROS_DOMAIN_ID=30          # 노트북과 동일해야 함
+export ROS_DOMAIN_ID=0          # 노트북과 동일해야 함
 
 # 카메라 + ESP32 + cmd_vel relay + 터틀봇 브링업 한 번에
 ros2 launch robocart_pi pi_bringup.launch.py
@@ -87,7 +87,7 @@ ros2 launch turtlebot3_bringup robot.launch.py
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/test0615/install/setup.bash   # robocart_tracker 빌드한 경우
-export ROS_DOMAIN_ID=30
+export ROS_DOMAIN_ID=0
 cd <smart_cart_core.py 있는 폴더>               # core/data/yolov8n.pt 가 import path 에
 ros2 run robocart_tracker tracker_node
 ```

@@ -26,7 +26,7 @@ import time
 
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 
 
 class FollowActuator:
@@ -51,6 +51,20 @@ class FollowActuator:
         # ── 퍼블리셔 ────────────────────────────────────────────
         self._pub_cmd = node.create_publisher(Twist, '/robocart/cmd_vel', 10)
         self._pub_servo = node.create_publisher(String, '/robocart/servo', 10)
+
+        # ── 세션 정지/복귀 래치 ─────────────────────────────────
+        # 이 액추에이터는 바퀴 명령을 cmd_server 를 거치지 않고 /robocart/cmd_vel 로
+        # 직접 발행한다 → cmd_server 의 정지 래치(HALT/RETURN)를 우회한다. 그래서
+        # 복귀(RETURN) 후에도 사람을 인식하면 move_to 가 계속 바퀴를 굴려 로봇이
+        # 따라가 버린다. 이를 막기 위해 cmd_server 가 쏘는 같은 신호를 여기서도
+        # 구독해 정지/복귀 시 추종·검색을 멈춘다(RESUME 전까지 래치 유지).
+        #   HALT   → /robocart/wait   (Empty)
+        #   RETURN → /robocart/return (String "RETURN_HOME")
+        #   RESUME → /robocart/resume (Empty)
+        self._halted = False
+        node.create_subscription(Empty,  '/robocart/wait',   self._on_stop,   1)
+        node.create_subscription(String, '/robocart/return', self._on_stop,   1)
+        node.create_subscription(Empty,  '/robocart/resume', self._on_resume, 1)
 
         # ── RosServo 호환 상태 ──────────────────────────────────
         self.connected = True
@@ -82,9 +96,24 @@ class FollowActuator:
     def _clamp(v, lim):
         return max(-lim, min(lim, v))
 
+    # ── 세션 정지/복귀 콜백 ────────────────────────────────────
+    def _on_stop(self, _msg):
+        """HALT(정지)/RETURN(복귀) 수신 — 추종·검색 중단, 사람 봐도 안 움직임."""
+        self._halted = True
+        self.mode = 'hold'
+        self._send_servo('SCAN_STOP', force=True)
+        self._publish_twist(0.0, 0.0)
+
+    def _on_resume(self, _msg):
+        """RESUME(추종 재개) 수신 — 다시 추종 허용."""
+        self._halted = False
+
     # ── core 가 호출하는 servo 인터페이스 ──────────────────────
     def move_to(self, angle: float):
         """추적 중 — 사람을 향해 바퀴 회전 + 전진. 서보는 중앙 유지."""
+        if self._halted:            # 정지/복귀 래치 — 사람을 봐도 움직이지 않음
+            self._publish_twist(0.0, 0.0)
+            return
         self.mode = 'track'
         self.current_angle = float(angle)
 
@@ -100,6 +129,10 @@ class FollowActuator:
 
     def start_sweep(self):
         """검색(사람 없음) — ESP32 서보 좌우 스캔, 바퀴 정지."""
+        if self._halted:            # 정지/복귀 래치 — 검색(스캔)도 하지 않음
+            self._send_servo('SCAN_STOP')
+            self._publish_twist(0.0, 0.0)
+            return
         self.mode = 'sweep'
         self._send_servo('SCAN_START')
         self._publish_twist(0.0, 0.0)
