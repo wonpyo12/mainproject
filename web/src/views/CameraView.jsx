@@ -243,7 +243,7 @@ export function CameraView({ robots = [], onTitleClick }) {
                         보안 접속(HTTPS) 환경이 아니어서 카메라 접근이 차단되었습니다.<br />
                         스마트폰/노트북 브라우저에서 아래 설정을 완료해 주세요:<br />
                         <strong>chrome://flags/#unsafely-treat-insecure-origin-as-secure</strong><br />
-                        위 주소에서 <code>http://192.168.0.29:5173</code>을 추가하고 활성화해 주세요.
+                        위 주소에서 <code>{window.location.origin}</code>을 추가하고 활성화해 주세요.
                       </>
                     ) : (
                       <>

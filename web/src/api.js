@@ -3,7 +3,7 @@ const BACKEND_URL = 'http://192.168.0.9:3000';
 // 화면 표시용 고정 정보 (매장명/관리자) — 데이터 아님
 const STATIC_INFO = {
   storeInfo: { name: '카트파일럿 데모 샵' },
-  userInfo:  { name: '관리자 문규석' },
+  userInfo:  { name: '관리자' },
 };
 
 // 관리자 로봇 제어 — 백엔드 → 라파 cmd_server TCP
