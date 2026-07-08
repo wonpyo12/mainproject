@@ -309,6 +309,7 @@ if _ROS2_OK:
             self.last_w = 0.0
             self.last_dist_cm = 0.0
             self._search_start = None      # 유실 탐색 회전 시작 시각
+            self._search_dir = 1.0         # 유실 탐색 시작 방향 — 마지막으로 본 박스 쪽(+1 좌 / -1 우)
             self._nav_goal_handle = None   # 진행 중 Nav2 목표 핸들(취소용)
             self.get_logger().info(f"RobotController v3 준비 (FOLLOW + Nav2 RETURN). ESP_IP: {self.esp_ip}")
             
@@ -435,6 +436,9 @@ if _ROS2_OK:
             err_c = (cx - frame_w / 2.0) / (frame_w / 2.0)
             w = 0.0 if abs(err_c) < CENTER_DEADBAND else _clamp(
                 -KP_ANG * err_c * self.ang_sign, -MAX_ANG, MAX_ANG)
+            if w != 0.0:
+                # 사람이 화면 한쪽에 있을 때 그 쪽을 기억 → 유실 시 그 방향부터 탐색
+                self._search_dir = 1.0 if w > 0 else -1.0
             # 중앙 우선 주행: 사람이 중앙에서 벗어날수록 전진을 감속해
             # 회전으로 먼저 중앙에 모은다 (가장자리로 밀려 시야 이탈하는 것 방지)
             if v > 0:
@@ -487,7 +491,8 @@ if _ROS2_OK:
             self.last_dist_cm = 0.0
             self._dist_mode = "SEARCH"
             phase = int((now - self._search_start) / SEARCH_HALF_PERIOD)
-            w = SEARCH_ANG if phase % 2 == 0 else -SEARCH_ANG
+            # 마지막으로 박스가 보였던 방향(_search_dir)부터 돌기 시작 → 반대쪽 헛돌기 방지
+            w = self._search_dir * (SEARCH_ANG if phase % 2 == 0 else -SEARCH_ANG)
             return 0.0, w
 
         def reset_search(self):
@@ -1132,19 +1137,16 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
         # ── 주행 ──
         if follower is not None:
             if follower.state == "FOLLOW":
-                if tracker.is_tracking:
-                    # 이번 프레임 bbox가 없으면(검출 간격/KCF 부재) 마지막 위치에
-                    # 수평 이동 속도(pred_vx)를 외삽해 '현재 추정 위치'로 조향
-                    # — 옛 위치로 가는 오조향과 검출 사이 멈칫거림 동시 방지
-                    steer_bbox = draw_bbox
-                    if steer_bbox is None and tracker.last_bbox is not None:
-                        lb = tracker.last_bbox
-                        dt_p = _clamp(time.time() - prev_match_t, 0.0, PRED_MAX_SEC) \
-                            if prev_match_t else 0.0
-                        sh = _clamp(pred_vx, -PRED_MAX_VX, PRED_MAX_VX) * dt_p
-                        steer_bbox = (lb[0] + sh, lb[1], lb[2] + sh, lb[3])
-                    v, w = follower.compute(steer_bbox, w_f, h_f, tracker.is_tracking)
+                if tracker.is_tracking and draw_bbox is not None:
+                    # 검출 또는 KCF 보간 박스가 실제로 있음 = 화면에 보임 → 추종 주행
+                    # (점수가 낮아 주황이어도 KCF가 살아 있으면 주행 유지 → 멈칫 방지)
+                    v, w = follower.compute(draw_bbox, w_f, h_f, True)
                     follower.reset_search()      # 추종 중 → 탐색 종료
+                elif tracker.is_tracking:
+                    # [유실 시 정지] KCF도 놓침 = 진짜 시야에서 사라짐 → 즉시 정지.
+                    # 기존엔 마지막 위치+외삽(pred_vx)으로 계속 전진했는데, 방향이 틀리면
+                    # 불안정 전진이 되므로 제거. 재매칭되면 위 분기로 복귀해 그 방향 전진.
+                    v, w = 0.0, 0.0
                 elif draw_bbox is not None:      # 재확인(confirm) 중 → 회전 말고 정지 대기
                     v, w = 0.0, 0.0
                     follower.reset_search()
