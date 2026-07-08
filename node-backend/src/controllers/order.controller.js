@@ -31,10 +31,35 @@ const completeOrder = async (req, res) => {
 
   try {
     // [Redis] 현재 장바구니 전체 읽기
+    // 장바구니가 비어 있으면 결제 없이 '카트 반납'으로 처리 (복귀 명령은 항상 전송)
     const cartRaw = await redis.hgetall(cartKey);
     if (!cartRaw || Object.keys(cartRaw).length === 0) {
       conn.release();
-      return res.status(400).json({ success: false, message: '장바구니가 비어 있습니다.' });
+
+      await redis.hmset(robotStatusKey, {
+        status:      'RETURNING',
+        userId:      '',
+        completedAt: new Date().toISOString(),
+      });
+      sendRobotReturnCommand(robotSerialNumber);
+
+      const io = req.app.get('io');
+      io.to('room:admin').emit('session:update', {
+        robotSerialNumber,
+        status: 'RETURNING',
+        user: null,
+        items: [],
+        totalAmount: 0,
+        orderTotal: 0,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: '구매한 상품이 없어 카트만 반납합니다.',
+        orderId: null,
+        totalPrice: 0,
+      });
     }
 
     const cartItems   = parseCartFromRedis(cartRaw);

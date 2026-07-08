@@ -237,17 +237,15 @@ class CartViewModel : ViewModel() {
                         isLoading = false,
                     )
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = response.message,
-                        isLoading = false,
-                    )
+                    // errorMessage 는 로그인/회원가입 화면에만 표시되므로,
+                    // 쇼핑 화면에서도 보이는 VoiceToast 로 실패 사유를 알린다.
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                    showVoice(response.message)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "completeOrder error", e)
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "결제 처리 중 오류가 발생했습니다.",
-                    isLoading = false,
-                )
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                showVoice("결제 처리 중 오류가 발생했습니다. 네트워크를 확인해 주세요.")
             }
         }
     }
