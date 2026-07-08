@@ -9,4 +9,7 @@ router.get('/dashboard', adminController.getDashboard);
 // [TCP → 라파 cmd_server] 관리자 로봇 제어 (긴급 정지 / 해제 / 충전소 복귀)
 router.post('/robot/command', adminController.robotCommand);
 
+// 로봇 쇼핑 세션 강제 초기화
+router.post('/robot/reset-session', adminController.resetSession);
+
 module.exports = router;

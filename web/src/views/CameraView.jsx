@@ -8,9 +8,10 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { STATUS } from '../data';
 import { useRobotSession } from '../hooks/useRobotSession';
+import { resetRobotSession } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'http://192.168.0.30:3000';
 
 export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
@@ -19,6 +20,18 @@ export function CameraView({ robots = [], onTitleClick }) {
   const targetRobot = robots[0] || null;
   // QR 매칭 → RFID 스캔 → 결제까지 고객 세션 실시간 반영
   const session = useRobotSession(targetRobot);
+
+  const handleResetSession = async () => {
+    if (!targetRobot) return;
+    if (window.confirm("현재 고객의 쇼핑 세션을 강제로 종료하고 초기화하시겠습니까?")) {
+      try {
+        await resetRobotSession(targetRobot.id);
+        alert("성공적으로 초기화되었습니다.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+  };
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -37,8 +50,13 @@ export function CameraView({ robots = [], onTitleClick }) {
 
   // QR 인증 전: 브라우저 내 웹캠으로 QR 스캔 / 매칭 후(쇼핑중): 로봇 추종 카메라
   const source = shopping ? 'robot' : 'laptop';
-  const backendHost = window.location.hostname || 'localhost';
-  const streamUrl = `http://${backendHost}:3000/api/hardware/video-feed?${source === 'robot' ? 'source=robot&' : ''}t=${retryKey}`;
+  const streamUrl = `${BACKEND_URL}/api/hardware/video-feed?${source === 'robot' ? 'source=robot&' : ''}t=${retryKey}`;
+
+  // 세션 상태가 바뀌어 소스가 전환되면 에러 상태 초기화 + 스트림 재요청
+  React.useEffect(() => {
+    setStreamError(false);
+    setRetryKey(prev => prev + 1);
+  }, [source]);
 
   // QR 매칭 성공 핸들러
   const handleQRScanSuccess = async (qrToken) => {
@@ -391,6 +409,35 @@ export function CameraView({ robots = [], onTitleClick }) {
                 {targetRobot.zone || '알 수 없음'}
               </dd>
             </div>
+
+            {shopping && (
+              <>
+                <div style={{ height: '1px', background: 'var(--border)', margin: '8px 0 4px' }} />
+                <button
+                  onClick={handleResetSession}
+                  className="ctl-btn"
+                  style={{
+                    width: '100%',
+                    background: 'rgba(229, 72, 77, 0.1)',
+                    color: 'var(--red)',
+                    border: '1px solid rgba(229, 72, 77, 0.2)',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 12.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    marginTop: 8
+                  }}
+                >
+                  <Icon name="log-out" size={14} />
+                  세션 강제 종료 (초기화)
+                </button>
+              </>
+            )}
           </dl>
         </Card>
       ) : (

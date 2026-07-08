@@ -11,7 +11,7 @@
 // ===================================================================
 const net = require('net');
 
-const PI_HOST = process.env.PI_HOST || 'localhost';
+const PI_HOST = process.env.PI_HOST || '192.168.0.67';
 const PI_CMD_PORT = Number(process.env.PI_CMD_PORT) || 9998;
 const CONNECT_TIMEOUT_MS = 3000;
 

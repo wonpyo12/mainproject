@@ -1,4 +1,4 @@
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'http://192.168.0.30:3000';
 
 // 화면 표시용 고정 정보 (매장명/관리자) — 데이터 아님
 const STATIC_INFO = {
@@ -16,6 +16,18 @@ export async function sendRobotCommand(command) {
   });
   const d = await res.json().catch(() => ({}));
   if (!res.ok || !d.success) throw new Error(d.message || `명령 전송 실패 (${res.status})`);
+  return d;
+}
+
+// 로봇 쇼핑 세션 강제 초기화
+export async function resetRobotSession(robotSerialNumber) {
+  const res = await fetch(`${BACKEND_URL}/api/admin/robot/reset-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ robotSerialNumber }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.success) throw new Error(d.message || `세션 초기화 실패 (${res.status})`);
   return d;
 }
 

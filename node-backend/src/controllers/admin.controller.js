@@ -160,4 +160,35 @@ const robotCommand = async (req, res) => {
   }
 };
 
-module.exports = { getDashboard, robotCommand };
+const resetSession = async (req, res) => {
+  const { robotSerialNumber } = req.body;
+  if (!robotSerialNumber) {
+    return res.status(400).json({ success: false, message: 'robotSerialNumber가 필요합니다.' });
+  }
+  try {
+    const robotStatusKey = `robot:status:${robotSerialNumber}`;
+    // Redis에서 해당 로봇의 status 해시 데이터 삭제
+    await redis.del(robotStatusKey);
+    
+    // Socket.io로 세션 업데이트 이벤트 전송하여 실시간으로 프론트 화면 초기화
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('session:update', {
+        robotSerialNumber,
+        status: null,
+        user: null,
+        items: [],
+        totalAmount: 0,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    console.log(`[Admin] 로봇 세션 강제 초기화 완료: ${robotSerialNumber}`);
+    return res.status(200).json({ success: true, message: '로봇 세션이 초기화되었습니다.' });
+  } catch (err) {
+    console.error('[Admin] resetSession error:', err);
+    return res.status(500).json({ success: false, message: '세션 초기화 중 오류가 발생했습니다.' });
+  }
+};
+
+module.exports = { getDashboard, robotCommand, resetSession };
