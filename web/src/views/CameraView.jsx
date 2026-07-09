@@ -11,7 +11,7 @@ import { useRobotSession } from '../hooks/useRobotSession';
 import { resetRobotSession } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
-const BACKEND_URL = 'http://192.168.0.9:3000';
+const BACKEND_URL = 'http://192.168.0.17:3000';
 
 export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
@@ -145,9 +145,11 @@ export function CameraView({ robots = [], onTitleClick }) {
             inversionAttempts: "dontInvert",
           });
 
-          if (code) {
-            console.log("QR Code found:", code.data);
-            handleQRScanSuccess(code.data);
+          // jsQR 은 노이즈를 빈 문자열 QR 로 오인식할 수 있어 실제 데이터가 있을 때만 처리
+          const qrData = code && code.data ? code.data.trim() : '';
+          if (qrData) {
+            console.log("QR Code found:", qrData);
+            handleQRScanSuccess(qrData);
             stopCamera();
             return;
           }
