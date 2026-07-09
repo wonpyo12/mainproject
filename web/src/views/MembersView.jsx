@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 
-const BACKEND_URL = 'http://192.168.0.9:3000';
+const BACKEND_URL = 'http://192.168.0.17:3000';
 
 
 

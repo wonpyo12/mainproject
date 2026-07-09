@@ -13,7 +13,7 @@ import { MapView } from './views/MapView';
 import { fetchDashboard } from './api';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = 'http://192.168.0.9:3000';
+const BACKEND_URL = 'http://192.168.0.17:3000';
 
 
 const NAV = [
