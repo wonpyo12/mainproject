@@ -66,6 +66,18 @@ data class CompleteOrderResponse(
     val totalPrice: Int?,
 )
 
+// ── 회원 정보 수정 (PATCH /api/members/:id) ────────────────────
+data class UpdateMemberRequest(
+    val name: String?,
+    val phone: String?,
+)
+
+// 응답의 data.member 는 snake_case(SQL 행 그대로)라 필요한 success/message 만 수신
+data class UpdateMemberResponse(
+    val success: Boolean,
+    val message: String,
+)
+
 // ── 구매 내역 (GET /api/orders/history) ────────────────────────
 data class OrderHistoryResponse(
     val success: Boolean,

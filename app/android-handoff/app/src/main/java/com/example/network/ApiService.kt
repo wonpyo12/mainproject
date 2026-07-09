@@ -31,6 +31,13 @@ interface ApiService {
         @Header("Authorization") authHeader: String,
     ): OrderHistoryResponse
 
+    // [MySQL] 회원 정보 수정 (이름/전화번호)
+    @PATCH("api/members/{id}")
+    suspend fun updateMember(
+        @Path("id") id: Int,
+        @Body request: UpdateMemberRequest,
+    ): UpdateMemberResponse
+
     // [로봇] 정지 — 그 자리 래치 정지(HALT)
     @POST("api/robot/stop")
     suspend fun stopRobot(

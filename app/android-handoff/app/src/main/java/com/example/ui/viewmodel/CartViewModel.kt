@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class Screen {
-    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, SUPPORT
+    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, RETURN_COMPLETE, SUPPORT
 }
 
 enum class TrackingState {
@@ -28,17 +28,30 @@ data class CartItem(
     val imageEmoji: String,
 )
 
+// 결제수단 (앱 내 관리 — 백엔드 미연동)
+data class PaymentMethod(
+    val id: Long,
+    val label: String,      // 예: "국민 체크카드"
+    val last4: String,      // 카드번호 끝 4자리
+    val isDefault: Boolean,
+)
+
 data class CartUiState(
     val currentScreen: Screen = Screen.SPLASH,
     // 유저 정보
     val userId: Int = 0,
     val userName: String = "",
+    val userEmail: String = "",
+    val userPhone: String = "",
     val token: String = "",
+    // 결제수단 (앱 내 관리)
+    val paymentMethods: List<PaymentMethod> = emptyList(),
+    val isProfileSaving: Boolean = false,
     // 로봇 정보
     val matchedCartId: String = "",
     val robotSerialNumber: String = "",
     val cartBattery: Int = 85,
-    val trackingState: TrackingState = TrackingState.FOLLOWING,
+    val trackingState: TrackingState = TrackingState.PAUSED,
     // QR
     val qrToken: String = "",
     // 쇼핑
@@ -84,6 +97,12 @@ class CartViewModel : ViewModel() {
                         token = response.token,
                         userId = response.user.id,
                         userName = response.user.name,
+                        userEmail = response.user.email,
+                        userPhone = response.user.phone ?: "",
+                        // 데모용 기본 결제수단 — 앱 내에서 추가/삭제 가능
+                        paymentMethods = listOf(
+                            PaymentMethod(id = 1L, label = "CartMe 체크카드", last4 = "4218", isDefault = true)
+                        ),
                         isLoading = false,
                     )
                     // Socket.io 연결 + 이벤트 리스너 등록
@@ -173,7 +192,8 @@ class CartViewModel : ViewModel() {
                     currentScreen = Screen.SHOPPING,
                     robotSerialNumber = event.robotSerialNumber,
                     matchedCartId = event.robotSerialNumber,
-                    trackingState = TrackingState.FOLLOWING,
+                    // 연결 직후엔 일시 정지 상태로 시작 → "추종 시작" 버튼이 먼저 보임
+                    trackingState = TrackingState.PAUSED,
                 )
                 showVoice("카트와 연결됐어요. 안전하게 따라갈게요.")
             }
@@ -221,7 +241,12 @@ class CartViewModel : ViewModel() {
     // [파트 4] 결제 완료: POST /api/orders/complete
     //  Redis 장바구니 → MySQL 영구 저장 → 로봇 복귀 명령
     // ──────────────────────────────────────────────────────
-    fun completeOrder() {
+    fun completeOrder() = submitOrderCompletion(Screen.COMPLETION)
+
+    // 복귀 버튼 — 같은 API(주문 마감 + 로봇 RETURN 신호)를 쓰되 복귀 완료 화면으로 이동
+    fun returnCart() = submitOrderCompletion(Screen.RETURN_COMPLETE)
+
+    private fun submitOrderCompletion(nextScreen: Screen) {
         val token = _uiState.value.token
         val robotSerial = _uiState.value.robotSerialNumber
         viewModelScope.launch {
@@ -233,7 +258,7 @@ class CartViewModel : ViewModel() {
                 )
                 if (response.success) {
                     _uiState.value = _uiState.value.copy(
-                        currentScreen = Screen.COMPLETION,
+                        currentScreen = nextScreen,
                         isLoading = false,
                     )
                 } else {
@@ -270,6 +295,74 @@ class CartViewModel : ViewModel() {
                 showVoice("구매 내역을 불러오지 못했어요.")
             }
         }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 회원 정보 수정: PATCH /api/members/:id (이름/전화번호)
+    // ──────────────────────────────────────────────────────
+    fun updateProfile(name: String, phone: String) {
+        val userId = _uiState.value.userId
+        if (userId == 0) return
+        if (name.isBlank()) {
+            showVoice("이름을 입력해 주세요.")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isProfileSaving = true)
+            try {
+                val response = api.updateMember(userId, UpdateMemberRequest(name, phone.ifBlank { null }))
+                if (response.success) {
+                    _uiState.value = _uiState.value.copy(
+                        userName = name,
+                        userPhone = phone,
+                        isProfileSaving = false,
+                    )
+                    showVoice("회원 정보가 수정되었어요.")
+                } else {
+                    _uiState.value = _uiState.value.copy(isProfileSaving = false)
+                    showVoice(response.message)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "updateProfile error", e)
+                _uiState.value = _uiState.value.copy(isProfileSaving = false)
+                showVoice("회원 정보 수정에 실패했어요. 네트워크를 확인해 주세요.")
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 결제수단 관리 — 앱 내 목록 관리 (백엔드 미연동)
+    // ──────────────────────────────────────────────────────
+    fun addPaymentMethod(label: String, cardNumber: String) {
+        val digits = cardNumber.filter { it.isDigit() }
+        if (label.isBlank() || digits.length < 4) {
+            showVoice("카드 이름과 카드번호를 확인해 주세요.")
+            return
+        }
+        val current = _uiState.value.paymentMethods
+        val method = PaymentMethod(
+            id = System.currentTimeMillis(),
+            label = label.trim(),
+            last4 = digits.takeLast(4),
+            isDefault = current.isEmpty(),   // 첫 카드는 자동으로 기본 결제수단
+        )
+        _uiState.value = _uiState.value.copy(paymentMethods = current + method)
+        showVoice("결제수단이 등록되었어요.")
+    }
+
+    fun removePaymentMethod(id: Long) {
+        val remaining = _uiState.value.paymentMethods.filter { it.id != id }
+        // 기본 카드를 지웠으면 남은 첫 카드를 기본으로 승격
+        val fixed = if (remaining.isNotEmpty() && remaining.none { it.isDefault }) {
+            remaining.mapIndexed { i, m -> m.copy(isDefault = i == 0) }
+        } else remaining
+        _uiState.value = _uiState.value.copy(paymentMethods = fixed)
+    }
+
+    fun setDefaultPaymentMethod(id: Long) {
+        _uiState.value = _uiState.value.copy(
+            paymentMethods = _uiState.value.paymentMethods.map { it.copy(isDefault = it.id == id) }
+        )
     }
 
     fun setTrackingState(state: TrackingState) {
@@ -313,6 +406,18 @@ class CartViewModel : ViewModel() {
                 showVoice(if (stop) "로봇 정지 신호 전송에 실패했어요." else "추종 재개 신호 전송에 실패했어요.")
             }
         }
+    }
+
+    // 복귀 완료 화면에서 "QR 화면으로" — 로봇 세션만 정리하고 로그인은 유지
+    fun finishReturn() {
+        _uiState.value = _uiState.value.copy(
+            currentScreen = Screen.DASHBOARD,
+            robotSerialNumber = "",
+            matchedCartId = "",
+            shoppingList = emptyList(),
+            qrToken = "",
+            trackingState = TrackingState.PAUSED,
+        )
     }
 
     fun removeItem(item: CartItem) {

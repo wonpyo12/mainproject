@@ -13,6 +13,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -115,6 +116,7 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
         Screen.SPLASH -> Surface                         // 스플래시: 흰 배경 + 노란 원 로고
         Screen.SIGNUP -> Blue                            // 회원가입: 앰버 배경
         Screen.COMPLETION -> NavyDeep                    // 결제완료: 다크 배경
+        Screen.RETURN_COMPLETE -> NavyDeep               // 복귀완료: 다크 배경
         Screen.LOGIN -> Surface
         Screen.ONBOARDING -> ScreenBg                    // 온보딩: 크림 배경
         Screen.DASHBOARD,                                // QR 페어링: 크림 배경 (목업)
@@ -123,6 +125,17 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
 
     // 고객센터(챗봇)에서 뒤로가기 눌렀을 때 돌아갈 화면을 기억한다.
     var supportOrigin by remember { mutableStateOf(Screen.SHOPPING) }
+
+    // 좌측 상단 햄버거 → 사이드 메뉴 + 메뉴에서 여는 전체 화면 패널
+    var menuOpen by remember { mutableStateOf(false) }
+    var menuPanel by remember { mutableStateOf<MenuPanel?>(null) }
+
+    // 주행 중(카트 연결 상태)에는 로그아웃 차단 — 복귀 버튼 안내 팝업
+    var showLogoutBlocked by remember { mutableStateOf(false) }
+    val guardedLogout: () -> Unit = {
+        if (uiState.robotSerialNumber.isNotBlank()) showLogoutBlocked = true
+        else viewModel.logout()
+    }
 
     // 챗봇 FAB 를 사용자가 드래그해서 옮긴 위치(px). 대시보드/쇼핑 화면 간 유지된다.
     var fabOffset by remember { mutableStateOf(Offset.Zero) }
@@ -159,14 +172,16 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     PairScreen(
                         uiState = uiState,
                         onGenerateQR = { viewModel.generateQR() },
-                        onLogout = { viewModel.logout() },
-                        onFetchHistory = { viewModel.fetchOrderHistory() }
+                        onLogout = guardedLogout,
+                        onOpenMenu = { menuOpen = true }
                     )
                 }
                 Screen.SHOPPING -> ShoppingScreen(
                     uiState = uiState,
                     viewModel = viewModel,
-                    onCheckout = { viewModel.navigateTo(Screen.PAYMENT) }
+                    onCheckout = { viewModel.navigateTo(Screen.PAYMENT) },
+                    onOpenMenu = { menuOpen = true },
+                    onLogout = guardedLogout
                 )
                 Screen.PAYMENT -> PaymentScreen(
                     uiState = uiState,
@@ -178,6 +193,9 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                 Screen.COMPLETION -> CompletionScreen(
                     uiState = uiState,
                     onRestart = { viewModel.logout() }
+                )
+                Screen.RETURN_COMPLETE -> ReturnCompletionScreen(
+                    onDone = { viewModel.finishReturn() }
                 )
                 Screen.SUPPORT -> SupportScreen(
                     token = uiState.token,
@@ -222,6 +240,419 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                     }
                     .padding(end = 20.dp, bottom = fabBottom)
             )
+        }
+
+        // 메뉴에서 열리는 전체 화면 패널 (회원정보 / 구매내역 / 결제수단)
+        when (menuPanel) {
+            MenuPanel.PROFILE -> ProfilePanel(
+                uiState = uiState,
+                onSave = { name, phone -> viewModel.updateProfile(name, phone) },
+                onClose = { menuPanel = null }
+            )
+            MenuPanel.HISTORY -> OrderHistoryPanel(uiState, onClose = { menuPanel = null })
+            MenuPanel.PAYMENT -> PaymentMethodsPanel(
+                uiState = uiState,
+                onAdd = { label, number -> viewModel.addPaymentMethod(label, number) },
+                onRemove = { viewModel.removePaymentMethod(it) },
+                onSetDefault = { viewModel.setDefaultPaymentMethod(it) },
+                onClose = { menuPanel = null }
+            )
+            null -> {}
+        }
+
+        // 좌측에서 슬라이드되는 사이드 메뉴 (가장 위 레이어)
+        SideMenuDrawer(
+            open = menuOpen,
+            userName = uiState.userName,
+            userEmail = uiState.userEmail,
+            onSelect = { panel ->
+                menuOpen = false
+                if (panel == MenuPanel.HISTORY) viewModel.fetchOrderHistory()
+                menuPanel = panel
+            },
+            onLogout = { menuOpen = false; guardedLogout() },
+            onDismiss = { menuOpen = false }
+        )
+
+        // 주행 중 로그아웃 차단 안내 팝업 (최상단 레이어)
+        if (showLogoutBlocked) {
+            LogoutBlockedDialog(onDismiss = { showLogoutBlocked = false })
+        }
+    }
+}
+
+/* ============================================================
+ *  주행 중 로그아웃 차단 팝업
+ * ============================================================ */
+@Composable
+private fun LogoutBlockedDialog(onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+    Box(
+        Modifier.fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 34.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .shadow(18.dp, RoundedCornerShape(24.dp), spotColor = Navy.copy(alpha = 0.4f))
+                .clip(RoundedCornerShape(24.dp))
+                .background(Surface)
+                .border(2.dp, Navy, RoundedCornerShape(24.dp))
+                .padding(horizontal = 24.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                Modifier.size(58.dp).clip(CircleShape).background(BlueSoft)
+                    .border(1.5.dp, Navy, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.NearMe, contentDescription = null, tint = AmberInk, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("주행 중에는 로그아웃할 수 없어요", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+                color = Navy, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "카트가 아직 연결되어 있어요.\n먼저 [복귀] 버튼을 눌러\n카트를 반납해 주세요.",
+                fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
+                textAlign = TextAlign.Center, lineHeight = 21.sp
+            )
+            Spacer(Modifier.height(20.dp))
+            PrimaryButton("확인", onDismiss, height = 48.dp)
+        }
+    }
+}
+
+/* ============================================================
+ *  SIDE MENU — 좌측 상단 햄버거로 여는 슬라이드 메뉴
+ * ============================================================ */
+private enum class MenuPanel { PROFILE, HISTORY, PAYMENT }
+
+@Composable
+private fun SideMenuDrawer(
+    open: Boolean,
+    userName: String,
+    userEmail: String,
+    onSelect: (MenuPanel) -> Unit,
+    onLogout: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (open) BackHandler(onBack = onDismiss)
+
+    // 스크림 — 페이드
+    AnimatedVisibility(visible = open, enter = fadeIn(tween(220)), exit = fadeOut(tween(220))) {
+        Box(
+            Modifier.fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }
+        )
+    }
+    // 드로어 본체 — 좌측 슬라이드
+    AnimatedVisibility(
+        visible = open,
+        enter = slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { -it },
+        exit = slideOutHorizontally(tween(220)) { -it },
+    ) {
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.78f)
+                .shadow(24.dp, RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
+                .clip(RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp))
+                .background(Surface)
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+        ) {
+            // 프로필 헤더
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(52.dp).clip(CircleShape).background(BlueSoft)
+                        .border(1.5.dp, Navy, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Person, contentDescription = null, tint = Navy, modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(13.dp))
+                Column {
+                    Text(userName.ifBlank { "고객" } + " 님", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
+                    if (userEmail.isNotBlank()) {
+                        Text(userEmail, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextSub,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(22.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+            Spacer(Modifier.height(10.dp))
+
+            SideMenuItem(Icons.Filled.Person, "회원정보", "이름 · 전화번호 수정") { onSelect(MenuPanel.PROFILE) }
+            SideMenuItem(Icons.Filled.ReceiptLong, "구매내역", "지난 주문 확인") { onSelect(MenuPanel.HISTORY) }
+            SideMenuItem(Icons.Filled.CreditCard, "결제수단 관리", "카드 등록 · 기본 카드 변경") { onSelect(MenuPanel.PAYMENT) }
+
+            Spacer(Modifier.weight(1f))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+            Spacer(Modifier.height(10.dp))
+            SideMenuItem(Icons.Filled.ExitToApp, "로그아웃", null, tint = Danger) { onLogout() }
+        }
+    }
+}
+
+@Composable
+private fun SideMenuItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    tint: Color = Navy,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = tint)
+            if (subtitle != null) {
+                Text(subtitle, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = TextFaint,
+                    modifier = Modifier.padding(top = 1.dp))
+            }
+        }
+    }
+}
+
+// 좌측 상단 햄버거 버튼 — HistoryChip 과 동일한 칩 스타일
+@Composable
+private fun MenuChip(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+            .background(Surface)
+            .border(1.5.dp, Navy, RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Filled.Menu, contentDescription = "메뉴", tint = Navy, modifier = Modifier.size(20.dp))
+    }
+}
+
+/* ============================================================
+ *  PROFILE — 회원정보 수정 패널
+ * ============================================================ */
+@Composable
+private fun ProfilePanel(
+    uiState: CartUiState,
+    onSave: (name: String, phone: String) -> Unit,
+    onClose: () -> Unit,
+) {
+    BackHandler(onBack = onClose)
+    var name by remember(uiState.userName) { mutableStateOf(uiState.userName) }
+    var phone by remember(uiState.userPhone) { mutableStateOf(uiState.userPhone) }
+    val changed = name != uiState.userName || phone != uiState.userPhone
+
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 22.dp, top = 14.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(2.dp))
+                Text("회원정보", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
+            }
+
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp)
+            ) {
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(RCard)).background(Surface)
+                        .border(1.5.dp, Navy, RoundedCornerShape(RCard))
+                        .padding(18.dp)
+                ) {
+                    ProfileField("이메일 (로그인 계정)", uiState.userEmail, enabled = false, onChange = {})
+                    Spacer(Modifier.height(14.dp))
+                    ProfileField("이름", name, onChange = { name = it })
+                    Spacer(Modifier.height(14.dp))
+                    ProfileField("전화번호", phone, keyboard = KeyboardType.Phone, onChange = { phone = it })
+                }
+                Spacer(Modifier.height(20.dp))
+                PrimaryButton(
+                    text = if (uiState.isProfileSaving) "저장 중..." else "저장하기",
+                    enabled = changed && !uiState.isProfileSaving && name.isNotBlank(),
+                    onClick = { onSave(name.trim(), phone.trim()) }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileField(
+    label: String,
+    value: String,
+    enabled: Boolean = true,
+    keyboard: KeyboardType = KeyboardType.Text,
+    onChange: (String) -> Unit,
+) {
+    Column {
+        Text(label, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = TextSub)
+        Spacer(Modifier.height(7.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            enabled = enabled,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            shape = RoundedCornerShape(RInput),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = InputBg,
+                unfocusedContainerColor = InputBg,
+                disabledContainerColor = InputBg.copy(alpha = 0.6f),
+                focusedBorderColor = Blue,
+                unfocusedBorderColor = InputBorder,
+                disabledBorderColor = InputBorder,
+                focusedTextColor = Navy,
+                unfocusedTextColor = Navy,
+                disabledTextColor = TextSub,
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/* ============================================================
+ *  PAYMENT METHODS — 결제수단 관리 패널 (앱 내 관리)
+ * ============================================================ */
+@Composable
+private fun PaymentMethodsPanel(
+    uiState: CartUiState,
+    onAdd: (label: String, number: String) -> Unit,
+    onRemove: (Long) -> Unit,
+    onSetDefault: (Long) -> Unit,
+    onClose: () -> Unit,
+) {
+    BackHandler(onBack = onClose)
+    var showAddForm by remember { mutableStateOf(false) }
+    var newLabel by remember { mutableStateOf("") }
+    var newNumber by remember { mutableStateOf("") }
+
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 22.dp, top = 14.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(2.dp))
+                Text("결제수단 관리", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
+            }
+
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Spacer(Modifier.height(4.dp))
+                if (uiState.paymentMethods.isEmpty()) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 30.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.CreditCard, contentDescription = null, tint = TextFaint, modifier = Modifier.size(44.dp))
+                        Spacer(Modifier.height(10.dp))
+                        Text("등록된 결제수단이 없어요", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextSub)
+                    }
+                } else {
+                    uiState.paymentMethods.forEach { method ->
+                        PaymentMethodCard(
+                            method = method,
+                            onSetDefault = { onSetDefault(method.id) },
+                            onRemove = { onRemove(method.id) },
+                        )
+                    }
+                }
+
+                // 카드 추가 — 버튼 또는 인라인 입력 폼
+                if (!showAddForm) {
+                    PrimaryButton("카드 추가", { showAddForm = true },
+                        leadingIcon = Icons.Filled.Add, variant = BtnVariant.Outline)
+                } else {
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(RCard)).background(Surface)
+                            .border(1.5.dp, Blue, RoundedCornerShape(RCard))
+                            .padding(18.dp)
+                    ) {
+                        Text("새 카드 등록", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
+                        Spacer(Modifier.height(13.dp))
+                        ProfileField("카드 이름", newLabel, onChange = { newLabel = it })
+                        Spacer(Modifier.height(12.dp))
+                        ProfileField("카드번호", newNumber, keyboard = KeyboardType.Number, onChange = { newNumber = it })
+                        Spacer(Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            PrimaryButton("취소", { showAddForm = false; newLabel = ""; newNumber = "" },
+                                modifier = Modifier.weight(1f), variant = BtnVariant.Outline, height = 46.dp)
+                            PrimaryButton("등록", {
+                                onAdd(newLabel, newNumber)
+                                showAddForm = false; newLabel = ""; newNumber = ""
+                            }, modifier = Modifier.weight(1f), height = 46.dp,
+                                enabled = newLabel.isNotBlank() && newNumber.filter { it.isDigit() }.length >= 4)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaymentMethodCard(
+    method: PaymentMethod,
+    onSetDefault: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(RCard)).background(Surface)
+            .border(1.5.dp, if (method.isDefault) Blue else Navy, RoundedCornerShape(RCard))
+            .clickable { onSetDefault() }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                .background(if (method.isDefault) Blue else BlueSoft)
+                .border(1.5.dp, Navy, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.CreditCard, contentDescription = null, tint = Navy, modifier = Modifier.size(21.dp))
+        }
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(method.label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Navy,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (method.isDefault) {
+                    Spacer(Modifier.width(7.dp))
+                    Text("기본", fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, color = AmberInk,
+                        modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(BlueSoft)
+                            .padding(horizontal = 8.dp, vertical = 3.dp))
+                }
+            }
+            Text("**** **** **** ${method.last4}", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                color = TextSub, modifier = Modifier.padding(top = 2.dp))
+        }
+        Box(Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).clickable { onRemove() },
+            contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.DeleteOutline, contentDescription = "삭제", tint = TextFaint, modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -1497,21 +1928,18 @@ private fun PairScreen(
     uiState: CartUiState,
     onGenerateQR: () -> Unit,
     onLogout: () -> Unit,
-    onFetchHistory: () -> Unit,
+    onOpenMenu: () -> Unit,
 ) {
-    var showHistory by remember { mutableStateOf(false) }
-
     Box(Modifier.fillMaxSize().background(ScreenBg)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(start = 26.dp, end = 26.dp, top = 16.dp, bottom = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically) {
-                // 구매 내역 메뉴 버튼
-                HistoryChip { onFetchHistory(); showHistory = true }
-                Spacer(Modifier.width(8.dp))
+                // 좌측 상단 햄버거 — 사이드 메뉴 (회원정보/구매내역/결제수단)
+                MenuChip(onOpenMenu)
                 LogoutChip(onLogout)
             }
             Spacer(Modifier.height(6.dp))
@@ -1569,11 +1997,6 @@ private fun PairScreen(
                 leadingIcon = Icons.Filled.Refresh
             )
         }
-
-        // 구매 내역 오버레이 — 헤더의 영수증(메뉴) 버튼으로 열기
-        if (showHistory) {
-            OrderHistoryPanel(uiState, onClose = { showHistory = false })
-        }
     }
 }
 
@@ -1581,7 +2004,13 @@ private fun PairScreen(
  *  SHOPPING — 장바구니는 socket:cart:updated 로 자동 갱신
  * ============================================================ */
 @Composable
-private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onCheckout: () -> Unit) {
+private fun ShoppingScreen(
+    uiState: CartUiState,
+    viewModel: CartViewModel,
+    onCheckout: () -> Unit,
+    onOpenMenu: () -> Unit,
+    onLogout: () -> Unit,
+) {
     val count = uiState.shoppingList.sumOf { it.quantity }
     val total = uiState.shoppingList.sumOf { it.price * it.quantity }
 
@@ -1591,6 +2020,9 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
             Row(modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 18.dp, top = 14.dp, bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 좌측 상단 햄버거 — 사이드 메뉴 (회원정보/구매내역/결제수단)
+                    MenuChip(onOpenMenu)
+                    Spacer(Modifier.width(12.dp))
                     Text("나의 카트", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
                     Spacer(Modifier.width(10.dp))
                     // 담김 개수 배지 — 상품 있으면 앰버 채움, 없으면 흰색 (목업)
@@ -1600,7 +2032,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                             .border(1.5.dp, Navy, RoundedCornerShape(99.dp))
                             .padding(horizontal = 12.dp, vertical = 6.dp))
                 }
-                LogoutChip({ viewModel.logout() })
+                LogoutChip(onLogout)
             }
 
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
@@ -1608,7 +2040,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                 Spacer(Modifier.height(12.dp))
                 CartControlCard(uiState,
                     onSet = { viewModel.setTrackingState(it) },
-                    onReturn = { viewModel.completeOrder() })
+                    onReturn = { viewModel.returnCart() })
 
                 Spacer(Modifier.height(18.dp))
                 Text("담은 상품 $count", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Navy,
@@ -1652,20 +2084,6 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
 /* ============================================================
  *  ORDER HISTORY — 구매 내역 (나의 카트 메뉴)
  * ============================================================ */
-@Composable
-private fun HistoryChip(onClick: () -> Unit) {
-    Box(
-        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
-            .background(Surface)
-            .border(1.5.dp, Navy, RoundedCornerShape(12.dp))
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(Icons.Filled.ReceiptLong, contentDescription = "구매 내역",
-            tint = Navy, modifier = Modifier.size(19.dp))
-    }
-}
-
 // "2026-07-08T05:10:02.000Z" → "2026.07.08 14:10" (로컬 시간)
 private fun formatOrderedAt(iso: String): String = runCatching {
     java.time.OffsetDateTime.parse(iso)
@@ -2004,6 +2422,43 @@ private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
                 color = OnDarkSub)
             Spacer(Modifier.height(36.dp))
             PrimaryButton("처음으로", onRestart, variant = BtnVariant.Filled)
+        }
+    }
+}
+
+/* ============================================================
+ *  RETURN COMPLETE — 복귀 버튼 전용 완료 화면 (결제완료와 분리)
+ * ============================================================ */
+@Composable
+private fun ReturnCompletionScreen(onDone: () -> Unit) {
+    var popped by remember { mutableStateOf(false) }
+    val pop by animateFloatAsState(if (popped) 1f else 0.8f,
+        spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow), label = "returnPop")
+    LaunchedEffect(Unit) { popped = true }
+
+    Box(Modifier.fillMaxSize().background(NavyDeep)) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(Modifier.size(96.dp).scale(pop)
+                .shadow(20.dp, CircleShape, spotColor = Blue.copy(alpha = 0.6f))
+                .clip(CircleShape).background(Blue),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Home, contentDescription = null, tint = Navy, modifier = Modifier.size(50.dp))
+            }
+            Spacer(Modifier.height(26.dp))
+            Text("복귀 완료!", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Text("카트가 매장 반납대로 돌아가고 있어요", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = LightBlue)
+            Spacer(Modifier.height(14.dp))
+            Mascot(width = 170.dp, mood = "wave")
+            Spacer(Modifier.height(4.dp))
+            Text("이용해 주셔서 감사합니다", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                color = OnDarkSub)
+            Spacer(Modifier.height(36.dp))
+            PrimaryButton("QR 화면으로", onDone, variant = BtnVariant.Filled)
         }
     }
 }
