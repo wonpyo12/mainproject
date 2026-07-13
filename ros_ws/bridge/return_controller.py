@@ -17,6 +17,9 @@ HJ의 robocart_navigation/mode_controller.py 를 현장 스택에 맞게 개조:
   python3 return_controller.py --ros-args -p home_pose.x:=0.0 -p home_pose.y:=0.0
 """
 import math
+import json
+import urllib.request
+import threading
 
 import rclpy
 from rclpy.node import Node
@@ -41,6 +44,11 @@ class ReturnController(Node):
         self.declare_parameter("home_pose.x", 0.0)
         self.declare_parameter("home_pose.y", 0.0)
         self.declare_parameter("home_pose.yaw", 0.0)
+        self.declare_parameter("backend_url", "http://192.168.0.17:3000")
+        self.declare_parameter("robot_serial", "CartMe-ROS2-08")
+
+        self.backend = self.get_parameter("backend_url").value.rstrip("/")
+        self.serial = self.get_parameter("robot_serial").value
 
         self.action_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
         self._goal_handle = None
@@ -99,8 +107,23 @@ class ReturnController(Node):
         status = future.result().status
         self._goal_handle = None
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info("도킹 도착 → follower reset 발행")
+            self.get_logger().info("도킹 도착 → follower reset 발행 및 백엔드 세션 초기화 전송")
             self._reset_pub.publish(Empty())
+            
+            # 백엔드 세션 초기화 API 호출 (비동기)
+            def send_reset():
+                url = f"{self.backend}/api/admin/robot/reset-session"
+                body = {"robotSerialNumber": self.serial}
+                req = urllib.request.Request(
+                    url, data=json.dumps(body).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                try:
+                    urllib.request.urlopen(req, timeout=2.0).read()
+                    self.get_logger().info("백엔드 세션 자동 초기화 성공")
+                except Exception as e:
+                    self.get_logger().error(f"백엔드 세션 자동 초기화 실패: {e}")
+            
+            threading.Thread(target=send_reset, daemon=True).start()
         else:
             self.get_logger().info(f"복귀 종료 (status={status}, reset 안 함)")
 
