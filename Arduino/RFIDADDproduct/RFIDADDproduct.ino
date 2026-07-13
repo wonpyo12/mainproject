@@ -21,7 +21,7 @@ const char* ssid     = "test1111";
 const char* password = "12345678";
 
 // ── 서버 URL 설정 (RFID 태그 전송용) ───────────────
-const char* serverURL = "http://192.168.0.9:3000/api/hardware/rfid";
+const char* serverURL = "http://192.168.0.17:3000/api/hardware/rfid";
 const char* robotSerialNumber = "CartMe-ROS2-08";
 
 // 동일 카드 연속 스캔 방지 (디바운스) 변수
@@ -99,6 +99,15 @@ void loop() {
   // 웹 서버 요청 처리 (비블로킹)
   server.handleClient();
 
+  // RC522 칩 통신 상태 자가진단 (Wi-Fi 노이즈로 인한 SPI 버스 멈춤 자동 복구)
+  byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
+  if (version == 0x00 || version == 0xFF) {
+    Serial.println("[RC522] 통신 오류 감지 - SPI 버스 및 리더기 강제 재부팅...");
+    SPI.end();
+    SPI.begin();
+    rfid.PCD_Init();
+  }
+
   // 스캔 간격 제한 (2초 이내 재스캔 방지, delay 제거로 서버 응답속도 보장)
   if (millis() - lastScanTime < 2000) {
     return;
@@ -132,9 +141,10 @@ void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClient client;
     HTTPClient http;
-
     http.begin(client, serverURL);
+    http.setTimeout(3000); // 3초 타임아웃 설정 (서버 대기용)
     http.addHeader("Content-Type", "application/json");
+    http.addHeader("Connection", "close"); // 소켓 누수 방지용 헤더 추가
 
     String body = "{\"rfidTag\":\"" + uidStr + "\",\"robotSerialNumber\":\"" + robotSerialNumber + "\"}";
 
@@ -160,12 +170,14 @@ void loop() {
     }
 
     http.end();
+    client.stop(); // 소켓 리소스 확실히 해제
   } else {
     Serial.println("Wi-Fi 끊김! 재연결 중...");
     WiFi.begin(ssid, password);
   }
 
-  // 카드 정지 (중복 읽기 방지)
+  // 카드 정지 (중복 읽기 방지) 및 RC522 재기동 (전압 강하로 인한 프리징 방지)
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
+  rfid.PCD_Init();
 }
