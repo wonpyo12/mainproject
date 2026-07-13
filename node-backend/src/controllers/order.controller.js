@@ -9,6 +9,7 @@
 // ===================================================================
 const pool  = require('../config/db');    // [MySQL]
 const redis = require('../config/redis'); // [Redis]
+const { sendRobotCommand } = require('../utils/robotBridge'); // [로봇] TCP 명령 브릿지
 
 // ───────────────────────────────────────────────
 // POST /api/orders/complete  (JWT 필요)
@@ -30,14 +31,43 @@ const completeOrder = async (req, res) => {
 
   try {
     // [Redis] 현재 장바구니 전체 읽기
+    // 장바구니가 비어 있으면 결제 없이 '카트 반납'으로 처리 (복귀 명령은 항상 전송)
     const cartRaw = await redis.hgetall(cartKey);
     if (!cartRaw || Object.keys(cartRaw).length === 0) {
       conn.release();
-      return res.status(400).json({ success: false, message: '장바구니가 비어 있습니다.' });
+
+      await redis.hmset(robotStatusKey, {
+        status:      'RETURNING',
+        userId:      '',
+        completedAt: new Date().toISOString(),
+      });
+      sendRobotReturnCommand(robotSerialNumber);
+
+      const io = req.app.get('io');
+      io.to('room:admin').emit('session:update', {
+        robotSerialNumber,
+        status: 'RETURNING',
+        user: null,
+        items: [],
+        totalAmount: 0,
+        orderTotal: 0,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: '구매한 상품이 없어 카트만 반납합니다.',
+        orderId: null,
+        totalPrice: 0,
+      });
     }
 
     const cartItems   = parseCartFromRedis(cartRaw);
     const totalPrice  = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0);
+
+    // [Redis] QR 매칭 때 기록된 쇼핑 시작 시각 (평균 쇼핑시간 통계용, 없으면 NULL)
+    const startedAtRaw = await redis.hget(robotStatusKey, 'startedAt');
+    const sessionStartedAt = startedAtRaw ? new Date(startedAtRaw) : null;
 
     // [MySQL] robots 테이블에서 serial_number로 robot DB id 조회
     const [robotRows] = await conn.query(
@@ -53,11 +83,11 @@ const completeOrder = async (req, res) => {
     await conn.beginTransaction();
 
     // [MySQL] orders 테이블 INSERT
-    // 컬럼: user_id, robot_id, total_price, payment_status, ordered_at
+    // 컬럼: user_id, robot_id, total_price, payment_status, session_started_at, ordered_at
     const [orderResult] = await conn.query(
-      `INSERT INTO orders (user_id, robot_id, total_price, payment_status, ordered_at)
-       VALUES (?, ?, ?, 'COMPLETED', NOW())`,
-      [userId, robotId, totalPrice]
+      `INSERT INTO orders (user_id, robot_id, total_price, payment_status, session_started_at, ordered_at)
+       VALUES (?, ?, ?, 'COMPLETED', ?, NOW())`,
+      [userId, robotId, totalPrice, sessionStartedAt]
     );
     const orderId = orderResult.insertId;
 
@@ -76,7 +106,7 @@ const completeOrder = async (req, res) => {
     await redis.del(cartKey);
 
     // [Redis] 로봇 상태 → RETURNING
-    await redis.hset(robotStatusKey, {
+    await redis.hmset(robotStatusKey, {
       status:      'RETURNING',
       userId:      '',
       completedAt: new Date().toISOString(),
@@ -92,6 +122,17 @@ const completeOrder = async (req, res) => {
       totalPrice,
       items: cartItems,
       completedAt: new Date().toISOString(),
+    });
+
+    // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 종료 push — 결제 완료 → 복귀
+    io.to('room:admin').emit('session:update', {
+      robotSerialNumber,
+      status: 'RETURNING',
+      user: null,
+      items: [],
+      totalAmount: 0,
+      orderTotal: totalPrice,
+      updatedAt: new Date().toISOString(),
     });
 
     return res.status(200).json({
@@ -164,11 +205,14 @@ const getOrderHistory = async (req, res) => {
   }
 };
 
-// ROS2 로봇 복귀 명령 전송
-// 실제 환경: MQTT publish / HTTP to ROS2 bridge / rosbridge websocket
+// 로봇 SLAM 복귀 명령 전송
+//   백엔드 ──TCP(9998)──→ 라파 cmd_server "RETURN"
+//   → /robocart/return=RETURN_HOME 발행 + 추종 정지(nav2 가 /cmd_vel 제어)
+// 결제(트랜잭션·웹소켓)는 이미 끝난 뒤이므로, 전송 실패해도 결제는 성공 처리하고 로그만 남긴다.
 function sendRobotReturnCommand(robotSerialNumber) {
-  console.log(`[ROS2] ${robotSerialNumber} → 초기위치 복귀 명령 전송 (nav2 goal: home_pose)`);
-  // 예시: mqttClient.publish(`robot/${robotSerialNumber}/cmd`, JSON.stringify({ action: 'RETURN_HOME' }));
+  sendRobotCommand('RETURN')
+    .then(() => console.log(`[Robot] ${robotSerialNumber} → SLAM 복귀(RETURN_HOME) 신호 전송`))
+    .catch((err) => console.error(`[Robot] ${robotSerialNumber} 복귀 신호 전송 실패:`, err.message));
 }
 
 // Redis HSET 평탄화 → 상품 배열

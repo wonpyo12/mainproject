@@ -20,6 +20,11 @@ data class CompleteOrderRequest(
     @SerializedName("robotSerialNumber") val robotSerialNumber: String,
 )
 
+// 로봇 정지(HALT) / 추종 재개(RESUME) 명령
+data class RobotCommandRequest(
+    @SerializedName("robotSerialNumber") val robotSerialNumber: String,
+)
+
 // ── 응답 ──────────────────────────────────────────────────────
 data class ApiResponse(
     val success: Boolean,
@@ -59,6 +64,39 @@ data class CompleteOrderResponse(
     val message: String,
     val orderId: Int?,
     val totalPrice: Int?,
+)
+
+// ── 회원 정보 수정 (PATCH /api/members/:id) ────────────────────
+data class UpdateMemberRequest(
+    val name: String?,
+    val phone: String?,
+)
+
+// 응답의 data.member 는 snake_case(SQL 행 그대로)라 필요한 success/message 만 수신
+data class UpdateMemberResponse(
+    val success: Boolean,
+    val message: String,
+)
+
+// ── 구매 내역 (GET /api/orders/history) ────────────────────────
+data class OrderHistoryResponse(
+    val success: Boolean,
+    val orders: List<OrderRecord> = emptyList(),
+)
+
+data class OrderRecord(
+    val orderId: Int,
+    val totalPrice: Double,      // MySQL DECIMAL 은 "12000.00" 문자열로 올 수 있어 Double 로 수신
+    val paymentStatus: String?,
+    val orderedAt: String,
+    val items: List<OrderRecordItem> = emptyList(),
+)
+
+data class OrderRecordItem(
+    val productId: Int,
+    val productName: String,
+    val quantity: Int,
+    val unitPrice: Double,
 )
 
 // ── WebSocket 이벤트 ───────────────────────────────────────────

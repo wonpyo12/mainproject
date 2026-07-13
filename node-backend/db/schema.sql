@@ -90,3 +90,22 @@ INSERT IGNORE INTO products (rfid_tag, name, price, category, stock) VALUES
   ('RFID-BANANA-001', '바나나',     800, '과일',  150),
   ('RFID-WATER-001',  '생수 500ml', 600, '음료',  200),
   ('RFID-BREAD-001',  '식빵',      2200, '베이커리', 50);
+
+-- ───────────────────────────────────────────────
+-- inquiries 테이블 (앱 '문의하기' → 웹 관리자 문의 목록)
+-- ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS inquiries (
+  id         BIGINT       NOT NULL AUTO_INCREMENT,
+  user_id    BIGINT       DEFAULT NULL,
+  name       VARCHAR(50)  DEFAULT NULL,          -- 문의자 이름(스냅샷)
+  email      VARCHAR(100) DEFAULT NULL,          -- 문의자 이메일(스냅샷)
+  category   VARCHAR(30)  DEFAULT '일반',         -- 문의 유형
+  content    TEXT         NOT NULL,              -- 문의 내용
+  answer     TEXT         DEFAULT NULL,          -- 관리자 답변 (앱에 표시)
+  status     VARCHAR(20)  NOT NULL DEFAULT 'PENDING',  -- PENDING | ANSWERED
+  answered_at DATETIME    DEFAULT NULL,          -- 답변 등록 시각
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_inq_created (created_at),
+  CONSTRAINT fk_inq_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

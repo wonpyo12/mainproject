@@ -1,2 +1,65 @@
 {
+  "robots": [
+    {
+      "id": "ROBOT-001",
+      "status": "following",
+      "user": "사용자",
+      "userId": "user1",
+      "zone": "B · 주행 트랙",
+      "battery": 84,
+      "x": 13.51,
+      "y": 49.38,
+      "items": 3,
+      "amount": 42000
+    },
+    {
+      "id": "ROBOT-002",
+      "status": "charging",
+      "user": null,
+      "userId": null,
+      "zone": "C · 충전소",
+      "battery": 98,
+      "x": 16.89,
+      "y": 67.9,
+      "items": 0,
+      "amount": 0
+    }
+  ],
+  "sessions": [
+    { "h": "09시", "v": 2 },
+    { "h": "10시", "v": 5 },
+    { "h": "11시", "v": 12 },
+    { "h": "12시", "v": 8 },
+    { "h": "13시", "v": 15 },
+    { "h": "14시", "v": 11 },
+    { "h": "15시", "v": 7 },
+    { "h": "16시", "v": 4 }
+  ],
+  "metrics": {
+    "todaySales": 1320000,
+    "avgShoppingTime": "22분",
+    "unprocessedAlerts": 2
+  },
+  "alerts": [
+    {
+      "level": "warn",
+      "cart": "ROBOT-001",
+      "ko": "사용자 이탈 발생 - 대기 상태 전환",
+      "mins": 2,
+      "timestamp": "2026-06-26T10:55:00Z"
+    },
+    {
+      "level": "urgent",
+      "cart": "ROBOT-002",
+      "ko": "배터리 임계 수치 도달 (8%)",
+      "mins": 15,
+      "timestamp": "2026-06-26T10:42:00Z"
+    }
+  ],
+  "storeInfo": {
+    "name": "카트파일럿 데모 샵"
+  },
+  "userInfo": {
+    "name": "관리자"
+  }
 }

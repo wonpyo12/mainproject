@@ -17,7 +17,13 @@ const char* password = "48864886";
 // ── 서버 URL 설정 ───────────────────────────────
 // PC의 로컬 IP로 변경하세요 (예: 192.168.0.10)
 // cmd에서 ipconfig 실행 후 IPv4 주소 확인
-const char* serverURL = "http://192.168.0.13:3000/api/products/rfid-scan";
+const char* serverURL = "http://192.168.0.17:3000/api/hardware/rfid";
+const char* robotSerialNumber = "CartMe-ROS2-08";
+
+// 동일 카드 연속 스캔 방지 (디바운스) 변수
+String lastUid = "";
+unsigned long lastScanTime = 0;
+const unsigned long debounceDelay = 5000; // 5초 이내 동일 카드 무시
 
 void setup() {
   Serial.begin(115200);
@@ -50,6 +56,17 @@ void loop() {
     uidStr += String(rfid.uid.uidByte[i], HEX);
   }
   uidStr.toUpperCase();
+
+  // 5초 이내에 동일한 카드를 연속 스캔한 경우 무시
+  if (uidStr == lastUid && (millis() - lastScanTime < debounceDelay)) {
+    rfid.PICC_HaltA();
+    rfid.PCD_StopCrypto1();
+    return;
+  }
+
+  lastUid = uidStr;
+  lastScanTime = millis();
+
   Serial.println("RFID 스캔: " + uidStr);
 
   // Wi-Fi 연결 확인 후 서버에 전송
@@ -60,8 +77,8 @@ void loop() {
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
-    // JSON 바디: { "uid": "XXXXXXXX" }
-    String body = "{\"uid\":\"" + uidStr + "\"}";
+    // JSON 바디: { "rfidTag": "XXXXXXXX", "robotSerialNumber": "CartMe-ROS2-08" }
+    String body = "{\"rfidTag\":\"" + uidStr + "\",\"robotSerialNumber\":\"" + robotSerialNumber + "\"}";
 
     Serial.print("요청 URL: ");
     Serial.println(serverURL);
@@ -72,7 +89,7 @@ void loop() {
       Serial.print("서버 응답 코드: ");
       Serial.println(httpCode);
       if (httpCode == 200) {
-        Serial.println(">> 웹 관리자 화면으로 전송 완료!");
+        Serial.println(">> 서버 전송 완료!");
       } else {
         Serial.print("서버 응답 내용: ");
         Serial.println(http.getString());

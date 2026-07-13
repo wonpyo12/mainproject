@@ -3,7 +3,7 @@ import { Card } from '../components/Card';
 import { Badge } from '../components/Badge';
 import { Icon } from '../components/Icon';
 
-export function AlertsView({ alerts = [] }) {
+export function AlertsView({ alerts = [], onDismiss }) {
   if (alerts.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '90px 0', color: 'var(--text-3)' }}>
@@ -48,7 +48,13 @@ export function AlertsView({ alerts = [] }) {
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>{a.ko}</div>
               </div>
               <span style={{ fontSize: 12, color: 'var(--text-3)', flex: 'none' }}>{a.mins}분 전</span>
-              <button className="ctl-btn" style={{ flex: 'none', width: 'auto', padding: '8px 14px' }}>확인</button>
+              <button 
+                onClick={() => onDismiss && onDismiss(i)}
+                className="ctl-btn" 
+                style={{ flex: 'none', width: 'auto', padding: '8px 14px' }}
+              >
+                확인
+              </button>
             </div>
           </Card>
         );

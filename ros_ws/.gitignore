@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pt
+**/data/pose_landmarker_lite.task
+**/data/smart_cart_profile.json
+**/data/samples/
+
+# colcon 빌드 산출물
+follow_drive/build/
+follow_drive/install/
+follow_drive/log/

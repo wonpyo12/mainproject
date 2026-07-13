@@ -24,4 +24,31 @@ interface ApiService {
         @Header("Authorization") authHeader: String,
         @Body request: CompleteOrderRequest,
     ): CompleteOrderResponse
+
+    // [MySQL] 유저 주문 이력 조회
+    @GET("api/orders/history")
+    suspend fun getOrderHistory(
+        @Header("Authorization") authHeader: String,
+    ): OrderHistoryResponse
+
+    // [MySQL] 회원 정보 수정 (이름/전화번호)
+    @PATCH("api/members/{id}")
+    suspend fun updateMember(
+        @Path("id") id: Int,
+        @Body request: UpdateMemberRequest,
+    ): UpdateMemberResponse
+
+    // [로봇] 정지 — 그 자리 래치 정지(HALT)
+    @POST("api/robot/stop")
+    suspend fun stopRobot(
+        @Header("Authorization") authHeader: String,
+        @Body request: RobotCommandRequest,
+    ): ApiResponse
+
+    // [로봇] 추종 재개 — 정지 해제(RESUME)
+    @POST("api/robot/resume")
+    suspend fun resumeRobot(
+        @Header("Authorization") authHeader: String,
+        @Body request: RobotCommandRequest,
+    ): ApiResponse
 }

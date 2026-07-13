@@ -73,4 +73,8 @@ __pycache__/
 ros_ws/src/robocart_navigation/maps/**/*.pgm
 ros_ws/src/robocart_navigation/maps/**/*.yaml
 !ros_ws/src/robocart_navigation/maps/.gitkeep
-
+
+
+# ---- merged from ks branch ----
+# 로컬 참고용 클론 (별도 저장소)
+mainproject/

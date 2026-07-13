@@ -27,6 +27,7 @@ button { font-family: inherit; }
 
 /* ---- Shell ---- */
 .shell { display: grid; grid-template-columns: 256px 1fr; height: 100vh; overflow: hidden; }
+.shell.kiosk { grid-template-columns: 1fr; }
 
 /* ---- Sidebar ---- */
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 18px 14px; overflow-y: auto; }

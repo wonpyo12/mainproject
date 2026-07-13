@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { Badge } from '../components/Badge';
 import { ProductRegisterModal } from './ProductRegisterModal';
 
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'http://192.168.0.17:3000';
 const won = (n) => '₩' + n.toLocaleString('ko-KR');
 
 export function InventoryView() {

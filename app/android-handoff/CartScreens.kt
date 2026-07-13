@@ -425,6 +425,48 @@ private fun PairScreen(uiState: CartUiState, onPair: () -> Unit, onLogout: () ->
                     .border(1.dp, Line, RoundedCornerShape(Radius))
                     .padding(16.dp)
             ) { FauxQr() }
+
+            if (uiState.qrToken.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                
+                // 3분(180초) 타이머 상태 관리 및 LaunchedEffect 구현
+                var timeLeft by remember(uiState.qrToken) { mutableStateOf(180) }
+                LaunchedEffect(uiState.qrToken) {
+                    timeLeft = 180
+                    while (timeLeft > 0) {
+                        delay(1000L)
+                        timeLeft--
+                    }
+                }
+                
+                val minutes = timeLeft / 60
+                val seconds = timeLeft % 60
+                val timeString = "%02d:%02d".format(minutes, seconds)
+                val isTimeExpired = timeLeft == 0
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Timer,
+                        contentDescription = "Timer",
+                        tint = if (isTimeExpired) Danger else Point,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (isTimeExpired) "시간 만료 (재발급 필요)" else "남은 시간: $timeString",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isTimeExpired) Danger else Point
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("3분 내에 스캔해 주세요 · 스캔 시 자동 이동",
+                    fontSize = 11.sp, color = Faint, textAlign = TextAlign.Center)
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -527,7 +569,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
             ) {
-                StatusCard(uiState) { viewModel.setTrackingState(it) }
+                StatusCard(uiState, onSet = { viewModel.setTrackingState(it) }, onReturn = { viewModel.completeOrder() })
                 Spacer(Modifier.height(20.dp))
                 SectionHeader("담은 상품 $count") {
                     Row(
@@ -580,7 +622,7 @@ private fun ShoppingScreen(uiState: CartUiState, viewModel: CartViewModel, onChe
 }
 
 @Composable
-private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit) {
+private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit, onReturn: () -> Unit) {
     val following = uiState.trackingState == TrackingState.FOLLOWING
     val tone: Color; val toneInk: Color; val toneBg: Color; val icon: ImageVector; val label: String; val desc: String
     when (uiState.trackingState) {
@@ -620,12 +662,30 @@ private fun StatusCard(uiState: CartUiState, onSet: (TrackingState) -> Unit) {
         }
 
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(RadiusSm)).background(SurfaceAlt).padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            SegButton("추종 시작", Icons.Filled.PlayArrow, active = following, activeBg = Point, activeFg = OnPoint, modifier = Modifier.weight(1f)) { onSet(TrackingState.FOLLOWING) }
-            SegButton("정지", Icons.Filled.Pause, active = !following, activeBg = Ink, activeFg = Color.White, modifier = Modifier.weight(1f)) { onSet(TrackingState.PAUSED) }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (following) {
+                PrimaryButton(
+                    text = "정지",
+                    onClick = { onSet(TrackingState.PAUSED) },
+                    leadingIcon = Icons.Filled.Pause,
+                    outline = true,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                PrimaryButton(
+                    text = "추종 시작",
+                    onClick = { onSet(TrackingState.FOLLOWING) },
+                    leadingIcon = Icons.Filled.PlayArrow,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            PrimaryButton(
+                text = "복귀",
+                onClick = onReturn,
+                leadingIcon = Icons.Filled.Home,
+                outline = true,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
