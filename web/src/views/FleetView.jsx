@@ -28,7 +28,7 @@ function RobotRow({ r, selected, onSelect }) {
             <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>{r.userId}</span>
           </>
         ) : (
-          <span style={{ fontSize: 13, color: 'var(--text-3)' }}>—</span>
+          <span style={{ fontSize: 13, color: 'var(--text-3)' }}>사용자 없음</span>
         )}
       </span>
       <span style={{ fontSize: 12.5, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.zone}</span>

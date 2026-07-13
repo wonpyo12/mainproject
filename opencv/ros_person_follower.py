@@ -35,7 +35,8 @@ class RobotController(Node):
         msg.linear.x = float(linear)
         msg.angular.z = float(angular)
         self.cmd_vel_pub.publish(msg)
-        # self.get_logger().info(f"Publishing -> Lin: {linear:.2f}, Ang: {angular:.2f}")
+        sub_count = self.cmd_vel_pub.get_subscription_count()
+        self.get_logger().info(f"Publishing -> Lin: {linear:.2f}, Ang: {angular:.2f} (Subs: {sub_count})")
 
 class VideoCaptureThreaded:
     """
@@ -157,7 +158,7 @@ def main():
 
     # ── 카메라 소스 설정 ──
     # 라즈베리파이 4 IP 주소 (실제 세팅에 맞춰 수정 가능)
-    PI_IP = "192.168.0.2" 
+    PI_IP = "192.168.0.23" 
     stream_url = f"http://{PI_IP}:5000/video_feed"
     
     print(f"[연동] 카메라 스트림 연결 중: {stream_url}")

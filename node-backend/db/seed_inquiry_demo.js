@@ -3,10 +3,13 @@ const pool = require('../src/config/db');
 
 (async () => {
   try {
-    // inqtest 사용자 찾기
-    const [u] = await pool.query(`SELECT id, name, email FROM users WHERE email = 'inqtest@cartme.com' LIMIT 1`);
+    // inqtest 사용자 찾기 (없으면 첫 번째 사용자 폴백)
+    let [u] = await pool.query(`SELECT id, name, email FROM users WHERE email = 'inqtest@cartme.com' LIMIT 1`);
+    if (u.length === 0) {
+      [u] = await pool.query(`SELECT id, name, email FROM users LIMIT 1`);
+    }
     const user = u[0];
-    if (!user) { console.log('inqtest 사용자 없음'); process.exit(0); }
+    if (!user) { console.log('[Seed] 데이터베이스에 유저가 존재하지 않아 시드를 생성할 수 없습니다. 회원가입 후 실행해 주세요.'); process.exit(0); }
 
     // 기존 깨진 데모 문의 정리 후 재삽입
     await pool.query(`DELETE FROM inquiries WHERE user_id = ?`, [user.id]);

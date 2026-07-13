@@ -78,3 +78,9 @@ ros_ws/src/robocart_navigation/maps/**/*.yaml
 # ---- merged from ks branch ----
 # 로컬 참고용 클론 (별도 저장소)
 mainproject/
+# Python pycache & compiled files
+__pycache__/
+*.pyc
+
+# Troubleshooting docs & logs
+/docs/
