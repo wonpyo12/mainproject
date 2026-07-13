@@ -120,7 +120,7 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
         Screen.LOGIN -> Surface
         Screen.ONBOARDING -> ScreenBg                    // 온보딩: 크림 배경
         Screen.DASHBOARD,                                // QR 페어링: 크림 배경 (목업)
-        Screen.SHOPPING, Screen.PAYMENT, Screen.SUPPORT -> ScreenBg
+        Screen.SHOPPING, Screen.PAYMENT, Screen.ORDER_DETAIL, Screen.SUPPORT -> ScreenBg
     }
 
     // 고객센터(챗봇)에서 뒤로가기 눌렀을 때 돌아갈 화면을 기억한다.
@@ -192,7 +192,12 @@ fun CartAppContent(viewModel: CartViewModel, innerPadding: PaddingValues) {
                 )
                 Screen.COMPLETION -> CompletionScreen(
                     uiState = uiState,
-                    onRestart = { viewModel.logout() }
+                    onShowDetail = { viewModel.navigateTo(Screen.ORDER_DETAIL) },
+                    onReturnCart = { viewModel.returnCart() }
+                )
+                Screen.ORDER_DETAIL -> OrderDetailScreen(
+                    uiState = uiState,
+                    onBack = { viewModel.navigateTo(Screen.COMPLETION) }
                 )
                 Screen.RETURN_COMPLETE -> ReturnCompletionScreen(
                     onDone = { viewModel.finishReturn() }
@@ -2389,8 +2394,12 @@ private fun AmountRow(label: String, value: String) {
  *  COMPLETION — 컨페티 + 마스코트
  * ============================================================ */
 @Composable
-private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
-    val total = uiState.shoppingList.sumOf { it.price * it.quantity }
+private fun CompletionScreen(
+    uiState: CartUiState,
+    onShowDetail: () -> Unit,
+    onReturnCart: () -> Unit,
+) {
+    val total = uiState.lastOrderTotal
 
     var popped by remember { mutableStateOf(false) }
     val pop by animateFloatAsState(if (popped) 1f else 0.8f,
@@ -2418,11 +2427,121 @@ private fun CompletionScreen(uiState: CartUiState, onRestart: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Mascot(width = 170.dp, mood = "celebrate")
             Spacer(Modifier.height(4.dp))
-            Text("카트는 매장 반납대로 복귀하고 있어요", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            Text("상품을 잊지 말고 가져가세요", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Blue)
+            Spacer(Modifier.height(6.dp))
+            Text("[복귀] 버튼을 누르면 카트가 매장 반납대로 돌아가요", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 color = OnDarkSub)
-            Spacer(Modifier.height(36.dp))
-            PrimaryButton("처음으로", onRestart, variant = BtnVariant.Filled)
+            Spacer(Modifier.height(32.dp))
+            PrimaryButton("결제 상세 보기", onShowDetail, variant = BtnVariant.Outline)
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton(
+                text = if (uiState.isLoading) "복귀 처리 중..." else "복귀",
+                onClick = onReturnCart,
+                enabled = !uiState.isLoading,
+            )
         }
+    }
+}
+
+/* ============================================================
+ *  ORDER DETAIL — 결제 상세 정보 (결제 완료 후 영수증)
+ * ============================================================ */
+@Composable
+private fun OrderDetailScreen(uiState: CartUiState, onBack: () -> Unit) {
+    val defaultCard = uiState.paymentMethods.find { it.isDefault } ?: uiState.paymentMethods.firstOrNull()
+
+    Box(Modifier.fillMaxSize().background(ScreenBg)) {
+        Column(Modifier.fillMaxSize()) {
+            Row(modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).clickable { onBack() },
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로", tint = Navy, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(4.dp))
+                Text("결제 상세", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Navy)
+            }
+
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
+                Spacer(Modifier.height(10.dp))
+                Text("주문 정보", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub,
+                    modifier = Modifier.padding(start = 2.dp))
+                Spacer(Modifier.height(10.dp))
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp)) {
+                    DetailRow("주문번호", if (uiState.lastOrderId > 0) "#${uiState.lastOrderId}" else "-")
+                    Spacer(Modifier.height(13.dp))
+                    DetailRow("결제 일시", uiState.lastOrderAt.ifBlank { "-" })
+                    Spacer(Modifier.height(13.dp))
+                    DetailRow("결제 상태", "결제 완료", valueColor = AmberInk)
+                }
+
+                Spacer(Modifier.height(24.dp))
+                Text("주문 상품", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub,
+                    modifier = Modifier.padding(start = 2.dp))
+                Spacer(Modifier.height(10.dp))
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp)) {
+                    if (uiState.lastOrderItems.isEmpty()) {
+                        Text("상품 정보가 없어요", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
+                    } else {
+                        uiState.lastOrderItems.forEachIndexed { index, item ->
+                            if (index > 0) {
+                                Spacer(Modifier.height(12.dp))
+                                Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Navy,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${won(item.price)}원 · ${item.quantity}개",
+                                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextSub,
+                                        modifier = Modifier.padding(top = 2.dp))
+                                }
+                                Text("${won(item.price * item.quantity)}원",
+                                    fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Navy)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+                Text("결제 정보", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextSub,
+                    modifier = Modifier.padding(start = 2.dp))
+                Spacer(Modifier.height(10.dp))
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
+                    .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp)) {
+                    DetailRow("결제수단",
+                        if (defaultCard != null) "${defaultCard.label} ····${defaultCard.last4}"
+                        else "CartPay 간편결제")
+                    Spacer(Modifier.height(13.dp))
+                    DetailRow("상품 금액", "${won(uiState.lastOrderTotal)}원")
+                    Spacer(Modifier.height(14.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("총 결제금액", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Navy)
+                        Text("${won(uiState.lastOrderTotal)}원", fontSize = 22.sp, fontWeight = FontWeight.Black, color = AmberInk)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+            }
+
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 34.dp, top = 8.dp)) {
+                PrimaryButton("확인", onBack)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String, valueColor: Color = Navy) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
+        Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = valueColor)
     }
 }
 

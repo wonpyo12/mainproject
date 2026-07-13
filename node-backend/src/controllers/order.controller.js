@@ -16,7 +16,8 @@ const { sendRobotCommand } = require('../utils/robotBridge'); // [로봇] TCP �
 // Body: { robotSerialNumber: string }
 // ───────────────────────────────────────────────
 const completeOrder = async (req, res) => {
-  const { robotSerialNumber } = req.body;
+  // returnRobot=false: 주문만 저장하고 복귀 신호는 보내지 않는다 (결제 완료 화면의 [복귀] 버튼에서 별도 전송)
+  const { robotSerialNumber, returnRobot = true } = req.body;
   const userId = req.user.userId;
 
   if (!robotSerialNumber) {
@@ -105,15 +106,17 @@ const completeOrder = async (req, res) => {
     // [Redis] 장바구니 데이터 삭제
     await redis.del(cartKey);
 
-    // [Redis] 로봇 상태 → RETURNING
-    await redis.hmset(robotStatusKey, {
-      status:      'RETURNING',
-      userId:      '',
-      completedAt: new Date().toISOString(),
-    });
+    if (returnRobot) {
+      // [Redis] 로봇 상태 → RETURNING
+      await redis.hmset(robotStatusKey, {
+        status:      'RETURNING',
+        userId:      '',
+        completedAt: new Date().toISOString(),
+      });
 
-    // ROS2 / 로봇 복귀 명령 전송 (가상 메서드)
-    sendRobotReturnCommand(robotSerialNumber);
+      // ROS2 / 로봇 복귀 명령 전송 (가상 메서드)
+      sendRobotReturnCommand(robotSerialNumber);
+    }
 
     // [WebSocket] 유저 앱으로 결제 완료 이벤트 푸시
     const io = req.app.get('io');
@@ -124,16 +127,30 @@ const completeOrder = async (req, res) => {
       completedAt: new Date().toISOString(),
     });
 
-    // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 종료 push — 결제 완료 → 복귀
-    io.to('room:admin').emit('session:update', {
-      robotSerialNumber,
-      status: 'RETURNING',
-      user: null,
-      items: [],
-      totalAmount: 0,
-      orderTotal: totalPrice,
-      updatedAt: new Date().toISOString(),
-    });
+    if (returnRobot) {
+      // [WebSocket] 관리자 웹(카메라 모니터링)으로 세션 종료 push — 결제 완료 → 복귀
+      io.to('room:admin').emit('session:update', {
+        robotSerialNumber,
+        status: 'RETURNING',
+        user: null,
+        items: [],
+        totalAmount: 0,
+        orderTotal: totalPrice,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      // 결제만 완료 — 세션(사용자·SHOPPING 상태)은 유지하고 비워진 장바구니만 반영
+      const [userRows] = await pool.query('SELECT name FROM users WHERE id = ?', [userId]);
+      io.to('room:admin').emit('session:update', {
+        robotSerialNumber,
+        status: 'SHOPPING',
+        user: { id: Number(userId), name: userRows.length > 0 ? userRows[0].name : null },
+        items: [],
+        totalAmount: 0,
+        orderTotal: totalPrice,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     return res.status(200).json({
       success: true,

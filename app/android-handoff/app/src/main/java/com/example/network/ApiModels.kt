@@ -18,6 +18,8 @@ data class LoginRequest(
 
 data class CompleteOrderRequest(
     @SerializedName("robotSerialNumber") val robotSerialNumber: String,
+    // false 면 주문만 저장하고 로봇 복귀 신호는 보내지 않는다 (결제 완료 화면의 [복귀] 버튼에서 별도 전송)
+    @SerializedName("returnRobot") val returnRobot: Boolean = true,
 )
 
 // 로봇 정지(HALT) / 추종 재개(RESUME) 명령

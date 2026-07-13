@@ -11,9 +11,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class Screen {
-    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, RETURN_COMPLETE, SUPPORT
+    SPLASH, LOGIN, SIGNUP, ONBOARDING, DASHBOARD, SHOPPING, PAYMENT, COMPLETION, ORDER_DETAIL, RETURN_COMPLETE, SUPPORT
 }
 
 enum class TrackingState {
@@ -59,6 +62,11 @@ data class CartUiState(
     // 구매 내역
     val orderHistory: List<OrderRecord> = emptyList(),
     val isHistoryLoading: Boolean = false,
+    // 마지막 결제 스냅샷 (결제 완료 · 결제 상세 화면용)
+    val lastOrderId: Int = 0,
+    val lastOrderItems: List<CartItem> = emptyList(),
+    val lastOrderTotal: Int = 0,
+    val lastOrderAt: String = "",
     // UI 상태
     val isLoading: Boolean = false,
     val errorMessage: String = "",
@@ -239,14 +247,15 @@ class CartViewModel : ViewModel() {
 
     // ──────────────────────────────────────────────────────
     // [파트 4] 결제 완료: POST /api/orders/complete
-    //  Redis 장바구니 → MySQL 영구 저장 → 로봇 복귀 명령
+    //  Redis 장바구니 → MySQL 영구 저장. 복귀 신호는 보내지 않는다 —
+    //  카트 복귀는 결제 완료 화면의 [복귀] 버튼에서 별도로 전송.
     // ──────────────────────────────────────────────────────
-    fun completeOrder() = submitOrderCompletion(Screen.COMPLETION)
+    fun completeOrder() = submitOrderCompletion(Screen.COMPLETION, returnRobot = false)
 
-    // 복귀 버튼 — 같은 API(주문 마감 + 로봇 RETURN 신호)를 쓰되 복귀 완료 화면으로 이동
-    fun returnCart() = submitOrderCompletion(Screen.RETURN_COMPLETE)
+    // 복귀 버튼 — 같은 API 로 로봇 RETURN 신호 전송 (결제 후엔 빈 카트라 반납만 처리됨)
+    fun returnCart() = submitOrderCompletion(Screen.RETURN_COMPLETE, returnRobot = true)
 
-    private fun submitOrderCompletion(nextScreen: Screen) {
+    private fun submitOrderCompletion(nextScreen: Screen, returnRobot: Boolean) {
         val token = _uiState.value.token
         val robotSerial = _uiState.value.robotSerialNumber
         viewModelScope.launch {
@@ -254,13 +263,28 @@ class CartViewModel : ViewModel() {
             try {
                 val response = api.completeOrder(
                     authHeader = "Bearer $token",
-                    request = CompleteOrderRequest(robotSerial),
+                    request = CompleteOrderRequest(robotSerial, returnRobot),
                 )
                 if (response.success) {
-                    _uiState.value = _uiState.value.copy(
-                        currentScreen = nextScreen,
-                        isLoading = false,
-                    )
+                    _uiState.value = if (nextScreen == Screen.COMPLETION) {
+                        // 결제 성공 — 상세 화면용 스냅샷을 남기고 장바구니는 비운다
+                        val paidItems = _uiState.value.shoppingList
+                        _uiState.value.copy(
+                            currentScreen = nextScreen,
+                            lastOrderId = response.orderId ?: 0,
+                            lastOrderItems = paidItems,
+                            lastOrderTotal = response.totalPrice
+                                ?: paidItems.sumOf { it.price * it.quantity },
+                            lastOrderAt = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date()),
+                            shoppingList = emptyList(),
+                            isLoading = false,
+                        )
+                    } else {
+                        _uiState.value.copy(
+                            currentScreen = nextScreen,
+                            isLoading = false,
+                        )
+                    }
                 } else {
                     // errorMessage 는 로그인/회원가입 화면에만 표시되므로,
                     // 쇼핑 화면에서도 보이는 VoiceToast 로 실패 사유를 알린다.
