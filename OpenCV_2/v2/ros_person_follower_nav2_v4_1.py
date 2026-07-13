@@ -870,7 +870,8 @@ def score_multi_emb(pref, cand, last_bbox, cand_bbox, frame_shape):
     (타인은 어떤 임베딩과도 낮게 나와 오인식 위험 증가는 미미. 임계값 유지 목적)
     """
     total, det = LF.score_against_profile(pref, cand, last_bbox, cand_bbox, frame_shape)
-    embs = pref.get("reid_embs") or []
+    # 등록 원본(불변) + 주행 중 수확분(reid_embs_live) 합쳐 max 비교 — 최대 12+8=20회 코사인
+    embs = (pref.get("reid_embs") or []) + (pref.get("reid_embs_live") or [])
     if embs:
         best = max(LF.cosine(e, cand.get("reid_emb")) for e in embs)
         if best > det["reid"]:
@@ -895,7 +896,7 @@ class DetectionWorker(threading.Thread):
         self._out_lock = threading.Lock()
         self._out = {"bboxes": [], "scores": {}, "best_bbox": None,
                      "best_total": 0.0, "best_detail": None, "best_ori": "unknown",
-                     "det_ms": 0.0, "reid_ms": 0.0, "seq": 0}
+                     "best_emb": None, "det_ms": 0.0, "reid_ms": 0.0, "seq": 0}
         self._seq = 0
         self._stop_flag = False
 
@@ -931,6 +932,7 @@ class DetectionWorker(threading.Thread):
             tm_det.stop()
 
             best_bbox, best_total, best_detail, best_ori = None, -1.0, None, "unknown"
+            best_emb = None
             scores = {}
             tm_reid.reset(); tm_reid.start()
             for bb in bboxes:
@@ -953,6 +955,7 @@ class DetectionWorker(threading.Thread):
                 scores[bb] = ph_best
                 if ph_best > best_total:
                     best_total, best_bbox, best_detail, best_ori = ph_best, bb, ph_det, ph_name
+                    best_emb = feat["reid_emb"]   # 온라인 수확용 — 이미 계산된 값 재사용
             tm_reid.stop()
 
             self._seq += 1
@@ -960,6 +963,7 @@ class DetectionWorker(threading.Thread):
                 self._out = {"bboxes": bboxes, "scores": scores,
                              "best_bbox": best_bbox, "best_total": best_total,
                              "best_detail": best_detail, "best_ori": best_ori,
+                             "best_emb": best_emb,
                              "det_ms": tm_det.getTimeMilli(),
                              "reid_ms": tm_reid.getTimeMilli(), "seq": self._seq}
             # 검출 사이클 사이 CPU 양보 — 코어 적은 VM에서 표시/주행 스레드 멈춤 방지
@@ -973,6 +977,7 @@ class DetectionWorker(threading.Thread):
 def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
                  just_registered=False):
     tracker = LF.TrackingState()
+    last_harvest = {}   # 온라인 프로필 보강 — phase별 마지막 수확 시각
     # [sh 인식] 촬영 직후 빠른 진입(warm_start) 미사용 — sh 원본대로 진입도 동일 기준(from_search) 적용
     kcf = MosseBoxTracker()   # 보간 트래커 (MOSSE — KCF 대비 8배 경량)
     kcf_age = 0
@@ -1156,6 +1161,22 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
                     vx_now = (cx_m - prev_cx) / (t_m - prev_match_t)
                     pred_vx = 0.6 * pred_vx + 0.4 * _clamp(vx_now, -PRED_MAX_VX, PRED_MAX_VX)
                 prev_cx, prev_match_t = cx_m, t_m
+                # [온라인 프로필 보강] 고신뢰 프레임 임베딩 자동 수확.
+                # 가드: ①ReID≥0.75(유지 임계보다 훨씬 엄격) ②추적 성립 상태만(confirm/rescue 제외)
+                #       ③2초 간격 ④등록 원본 불변, 수확 풀만 오래된 것부터 교체
+                if (tracker.status == "tracking" and not rescued
+                        and detail.get("reid", 0) >= LF.HARVEST_REID_MIN
+                        and det.get("best_emb")
+                        and t_m - last_harvest.get(ori, 0.0) >= LF.HARVEST_INTERVAL_S):
+                    ph = profile.get("phases", {}).get(ori)
+                    if ph is not None:
+                        live = ph.setdefault("reid_embs_live", [])
+                        live.append(det["best_emb"])
+                        if len(live) > LF.HARVEST_EXTRA_MAX:
+                            live.pop(0)
+                        last_harvest[ori] = t_m
+                        DBG.log("harvest", ori=ori, reid=round(detail["reid"], 3),
+                                n_live=len(live))
             else:
                 tracker.update(False)
                 reg_det_bbox = None
