@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  [선택] 유니캐스트 디스커버리 프로파일 (라즈베리파이 측)
+  환경: WiFi(SSID: test), 데스크탑 ↔ 라즈베리파이 동일 서브넷 192.168.0.x
+  보통 같은 서브넷 WiFi는 멀티캐스트가 되므로 ROS2 기본 디스커버리로 자동 연결됨.
+  공유기가 멀티캐스트를 막아 디스커버리가 안 될 때만 사용:
+    USE_FASTDDS_UNICAST=1 bash raspi_camera_launch.sh
+  사용 시 아래 데스크탑 IP를 실제 값으로 채울 것 (데스크탑에서 `hostname -I`).
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <participant profile_name="default_profile" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <metatrafficUnicastLocatorList>
+          <locator/>
+        </metatrafficUnicastLocatorList>
+        <initialPeersList>
+          <!-- 라즈베리파이 자신 -->
+          <locator>
+            <udpv4>
+              <address>192.168.0.2</address>
+            </udpv4>
+          </locator>
+          <!-- 데스크탑 -->
+          <locator>
+            <udpv4>
+              <address>192.168.0.80</address>
+            </udpv4>
+          </locator>
+        </initialPeersList>
+        <use_WriterLivelinessProtocol>false</use_WriterLivelinessProtocol>
+      </builtin>
+    </rtps>
+  </participant>
+</profiles>
