@@ -33,7 +33,7 @@ const unsigned long debounceDelay = 5000; // 5초 이내 동일 카드 무시
 void handleLED() {
   if (server.hasArg("status")) {
     String status = server.arg("status");
-    Serial.println("LED 상태 변경 요청: " + status);
+    Serial.println("LED Status Change Request: " + status);
     
     if (status == "RUNNING") {
       digitalWrite(LED_GREEN, HIGH);  // 초록불 켬
@@ -70,7 +70,7 @@ void setup() {
   digitalWrite(LED_GREEN, LOW);
 
   Serial.println();
-  Serial.print("와이파이 연결중");
+  Serial.print("Connecting to WiFi");
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -81,7 +81,7 @@ void setup() {
   }
 
   Serial.println("");
-  Serial.print("연결 완료 - IP: ");
+  Serial.print("Connected - IP: ");
   Serial.println(WiFi.localIP());
 
   // 와이파이 연결 성공 시: VM 구동 전이므로 빨간불(정지/대기) 상태 유지
@@ -92,7 +92,7 @@ void setup() {
   // HTTP LED 제어 경로 등록
   server.on("/led", handleLED);
   server.begin();
-  Serial.println("HTTP LED 제어 서버 시작됨");
+  Serial.println("HTTP LED Control Server Started");
 }
 
 void loop() {
@@ -102,7 +102,7 @@ void loop() {
   // RC522 칩 통신 상태 자가진단 (Wi-Fi 노이즈로 인한 SPI 버스 멈춤 자동 복구)
   byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
   if (version == 0x00 || version == 0xFF) {
-    Serial.println("[RC522] 통신 오류 감지 - SPI 버스 및 리더기 강제 재부팅...");
+    Serial.println("[RC522] Comm Error Detected - Restarting SPI Bus & Reader...");
     SPI.end();
     SPI.begin();
     rfid.PCD_Init();
@@ -135,7 +135,7 @@ void loop() {
   lastUid = uidStr;
   lastScanTime = millis();
 
-  Serial.println("RFID 스캔: " + uidStr);
+  Serial.println("RFID Scanned: " + uidStr);
 
   // Wi-Fi 연결 확인 후 서버에 전송
   if (WiFi.status() == WL_CONNECTED) {
@@ -148,18 +148,18 @@ void loop() {
 
     String body = "{\"rfidTag\":\"" + uidStr + "\",\"robotSerialNumber\":\"" + robotSerialNumber + "\"}";
 
-    Serial.print("요청 URL: ");
+    Serial.print("Request URL: ");
     Serial.println(serverURL);
 
     int httpCode = http.POST(body);
 
     if (httpCode > 0) {
-      Serial.print("서버 응답 코드: ");
+      Serial.print("Server Response Code: ");
       Serial.println(httpCode);
       if (httpCode == 200) {
-        Serial.println(">> 서버 전송 완료!");
+        Serial.println(">> Server transmission success!");
       } else {
-        Serial.print("서버 응답 내용: ");
+        Serial.print("Server Response Body: ");
         Serial.println(http.getString());
       }
     } else {
@@ -172,7 +172,7 @@ void loop() {
     http.end();
     client.stop(); // 소켓 리소스 확실히 해제
   } else {
-    Serial.println("Wi-Fi 끊김! 재연결 중...");
+    Serial.println("Wi-Fi disconnected! Reconnecting...");
     WiFi.begin(ssid, password);
   }
 
