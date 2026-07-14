@@ -718,7 +718,10 @@ def speak_on_pi(pi_ip, text):
             import urllib.parse
             import urllib.request
             encoded_text = urllib.parse.quote(text)
-            url = f"http://{pi_ip}:5000/speak?text={encoded_text}"
+            # [v4_1_5] "IP" 또는 "IP:포트" 모두 허용 — 키오스크에서 5000이 이미 쓰이면
+            # --speak-ip 192.168.0.19:5001 처럼 포트를 붙여 지정
+            host = pi_ip if ":" in str(pi_ip) else f"{pi_ip}:5000"
+            url = f"http://{host}/speak?text={encoded_text}"
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=1.5) as response:
                 pass
@@ -1459,7 +1462,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="등록 사용자 추종 + Nav2 복귀 (분산)")
     p.add_argument("--pi-ip", default="192.168.0.35", help="라즈베리파이 IP (MJPEG :5000)")
     p.add_argument("--speak-ip", default=None,
-                   help="음성 안내(TTS) 수신 서버 IP — 키오스크 PC 지정 시 그쪽 스피커로 출력, 미지정 시 pi-ip(RPi)")
+                   help="음성 안내(TTS) 수신 서버 — 'IP' 또는 'IP:포트' (예: 192.168.0.19:5001). 미지정 시 pi-ip(RPi):5000")
     p.add_argument("--esp-ip", default=None, help="ESP8266 (RFID & LED) IP 주소 (예: 192.168.0.xx)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
