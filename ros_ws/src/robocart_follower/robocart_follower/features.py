@@ -19,14 +19,21 @@ import cv2
 import numpy as np
 
 # ── 매칭 임계값 (튜닝 가능) ─────────────────────────────────
-MATCH_THRESHOLD = 0.72   # 새 사람을 추종 대상으로 잠금
-KEEP_THRESHOLD  = 0.60   # 잠금 유지 (이 아래로 떨어지면 lost)
+MATCH_THRESHOLD     = 0.72   # 최초 획득: 새 사람을 추종 대상으로 잠금
+KEEP_THRESHOLD      = 0.60   # FOLLOW 유지 (이 아래로 떨어지면 lost)
+REACQUIRE_THRESHOLD = 0.58   # SEARCH 재획득: color 붕괴 대응 (이슈 #48)
 
-# 가중치 (합 = 1.0) — ReID 중심 (60%) + HSV 보조 (20%) + 위치(15%) + 체형(5%)
+# FOLLOW/최초획득 가중치 (합 = 1.0) — ReID 중심 (60%) + HSV 보조 (20%) + 위치(15%) + 체형(5%)
 W_REID     = 0.60
 W_COLOR    = 0.20
 W_POSITION = 0.15
 W_SHAPE    = 0.05
+
+# SEARCH 재획득 전용 가중치 — color 의존도 최소화 (조명/각도 변화 대응)
+W_REID_SEARCH     = 0.80
+W_COLOR_SEARCH    = 0.07
+W_POSITION_SEARCH = 0.08
+W_SHAPE_SEARCH    = 0.05
 
 # 색상 히스토그램 bin 수 (작을수록 빠르지만 거칠어짐)
 HIST_BINS_H = 16   # Hue
