@@ -213,29 +213,22 @@ BURGER_MAX_ANG = 2.84
 
 # 거리 추정(bbox 폭 핀홀): 거리[cm] = CALIB_K / bbox_width[px]  (실차 보정 필요)
 CALIB_K        = 22000.0
-# 거리 유지 기준: TARGET 50 / NEAR 40 / FAR 65 cm (NEAR 40cm > FRONT_STOP 25cm)
-# 35/30/40 → 50/40/65: 데드밴드가 좁아 추적 중 28%가 정지(가다서다) → 보행 속도를 못 따라가
-# 유실되던 문제. 목표거리를 늘려 반응 여유 확보 + 데드밴드 확대로 정지 구간 축소 (07-14)
-TARGET_DIST_CM = 50.0
-DIST_NEAR_CM   = 40.0
-DIST_FAR_CM    = 65.0
+# 거리 유지 기준: TARGET 35 / NEAR 30 / FAR 40 cm (NEAR 30cm > FRONT_STOP 25cm)
+TARGET_DIST_CM = 35.0
+DIST_NEAR_CM   = 30.0
+DIST_FAR_CM    = 40.0
 CENTER_DEADBAND = 0.05   # 0.08→0.05: 중앙 유지 판정 강화
 # 중앙 우선 주행: |중심 오차|×이 값 만큼 전진 감속 (1.5면 오차 0.67에서 전진 0)
 CENTER_HOLD_GAIN = 1.5
 
 KP_LIN_DIST = 0.006      # 0.004→0.006: 사람 보행 속도 대응 (err 20cm 이상이면 MAX_LIN 도달)
 KP_ANG      = 0.8        # 0.5→0.8: 회전 추종 반응 강화 (시야 이탈 방지)
-MAX_LIN     = 0.20       # 0.18→0.20: 보행 추종 강화 (Burger 한계 0.22 이내)
+MAX_LIN     = 0.18       # 0.12→0.18: Burger 한계(0.22) 이내 상향
 MAX_LIN_REV = 0.08
 MAX_ANG     = 1.0        # 0.5→1.0: Burger 한계(2.84) 이내 상향
 ALLOW_REVERSE = True
 
-FRONT_STOP_M = 0.25      # 전방 좁은 콘(±15°) 이 거리 이내 장애물이면 전진 0 (안전)
-# [07-14 충돌 사고 대응] 코너에서 로봇 덩치를 무시하고 회전하다 측면 충돌 →
-# 박은 뒤에도 전진을 계속해 바퀴 슬립으로 odom/AMCL이 어긋나 복귀 위치까지 틀어짐.
-HARD_STOP_M  = 0.20      # 전방 ±60° 어디든 이 거리 이내면 전진 완전 차단 (밀어붙임 방지)
-SIDE_BLOCK_M = 0.30      # 회전하려는 쪽 측면(20~95°)에 이 거리 이내 장애물이면 그 방향 회전 금지
-AVOID_RANGE_M = 0.65     # 반응형 회피: 전방 ±50° 이 거리 이내 장애물에 척력 조향
+FRONT_STOP_M = 0.25      # 전방 라이다 이 거리 이내 장애물이면 전진 0 (안전)
 
 # 유실 탐색: 등록자 놓치면 제자리서 좌우 교대 저속 회전(v=0)으로 재탐색
 SEARCH_ANG         = 0.20   # 탐색 회전 각속도(rad/s)
@@ -416,27 +409,6 @@ if _ROS2_OK:
                     valid.append(r)
             return min(valid) * 100.0 if valid else None  # m → cm
 
-        def _sector_min(self, deg_from, deg_to):
-            """방위 구간(도, 정면 0·CCW+ = 좌측 양수) 내 라이다 최솟값(m). 유효값 없으면 None."""
-            scan = self.latest_scan
-            if scan is None or not scan.ranges or scan.angle_increment <= 0:
-                return None
-            n = len(scan.ranges)
-            i0 = self._bearing_to_idx(scan, math.radians(deg_from))
-            i1 = self._bearing_to_idx(scan, math.radians(deg_to))
-            if i0 is None or i1 is None:
-                return None
-            vals = []
-            i = i0
-            while True:
-                r = scan.ranges[i]
-                if scan.range_min < r < scan.range_max and math.isfinite(r):
-                    vals.append(r)
-                if i == i1:
-                    break
-                i = (i + 1) % n
-            return min(vals) if vals else None
-
         # ── FOLLOW: bbox → (v, w) ──
         def compute(self, bbox, frame_w, frame_h, is_tracking):
             if not is_tracking or bbox is None or frame_w <= 0:
@@ -473,53 +445,10 @@ if _ROS2_OK:
             if w != 0.0:
                 # 사람이 화면 한쪽에 있을 때 그 쪽을 기억 → 유실 시 그 방향부터 탐색
                 self._search_dir = 1.0 if w > 0 else -1.0
-
-            # ── [라이다 반응형 회피 조향] 전방 ±50° / 0.65m 이내 장애물에 척력 부여
-            #    (origin/kw 65b062b 포팅 + 개선: 추종 대상 방위 ±15°는 척력 제외 —
-            #     사람 자체를 장애물로 오인해 옆으로 새는 것 방지)
-            avoidance_w = 0.0
-            scan = self.latest_scan
-            if scan is not None and scan.ranges and scan.angle_increment > 0:
-                n = len(scan.ranges)
-                person_b = self._last_bearing
-                for idx in range(n):
-                    r = scan.ranges[idx]
-                    if scan.range_min < r < AVOID_RANGE_M and math.isfinite(r):
-                        ang = scan.angle_min + idx * scan.angle_increment
-                        ang = math.atan2(math.sin(ang), math.cos(ang))  # [-π, π]
-                        if abs(ang) >= math.radians(50.0):
-                            continue
-                        if person_b is not None and abs(ang - person_b) < math.radians(15.0):
-                            continue   # 추종 대상은 회피 대상이 아님
-                        weight = (AVOID_RANGE_M - r) / AVOID_RANGE_M
-                        avoidance_w += -math.copysign(1.0, ang) * weight * 0.35
-                avoidance_w = _clamp(avoidance_w, -0.7, 0.7)
-            w = _clamp(w + avoidance_w, -MAX_ANG, MAX_ANG)
-
-            # ── [측면 회전 차단] 돌려는 쪽 측면에 장애물이 붙어 있으면 그 방향 회전 금지
-            #    (코너에서 로봇 폭을 무시하고 회전하다 측면 충돌하는 것 방지)
-            if w > 0.05:
-                left_min = self._sector_min(20, 95)
-                if left_min is not None and left_min < SIDE_BLOCK_M:
-                    w = 0.0
-            elif w < -0.05:
-                right_min = self._sector_min(-95, -20)
-                if right_min is not None and right_min < SIDE_BLOCK_M:
-                    w = 0.0
-
             # 중앙 우선 주행: 사람이 중앙에서 벗어날수록 전진을 감속해
             # 회전으로 먼저 중앙에 모은다 (가장자리로 밀려 시야 이탈하는 것 방지)
             if v > 0:
                 v *= max(0.0, 1.0 - abs(err_c) * CENTER_HOLD_GAIN)
-            # 회피 조향 중에는 전진도 감속 → 부드러운 선회
-            if v > 0 and abs(avoidance_w) > 0.1:
-                v *= max(0.1, 1.0 - abs(avoidance_w) * 1.2)
-            # ── [광각 하드스톱] 전방 ±60° 어디든 0.20m 이내면 전진 완전 차단
-            #    (충돌 상태에서 계속 밀어붙여 바퀴 슬립 → odom/AMCL 붕괴 방지)
-            if v > 0:
-                front_min = self._sector_min(-60, 60)
-                if front_min is not None and front_min < HARD_STOP_M:
-                    v = 0.0
             return v, w
 
         # ── 라이다 브리징: 카메라 유실 직후 마지막 방위의 라이다 덩어리를 잠시 추종 ──
