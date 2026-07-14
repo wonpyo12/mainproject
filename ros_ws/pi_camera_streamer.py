@@ -45,8 +45,9 @@ def speak(text, cooldown=5.0):
                 tts.save(temp_path)
                 
                 # -b 1024 버퍼 옵션을 추가하여 CPU 부하 시 음이 툭툭 끊기거나 깨지는 현상을 방지합니다.
-                # -f 65536: 2배 증폭 (기본 32768 = 100%). 음이 찢어지면 49152(1.5배)로 낮출 것.
-                res = subprocess.run(["mpg123", "-q", "-b", "1024", "-f", "65536", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # [07-14] -f 65536(2배 증폭) 시도 → 증폭 직후 RPi USB 스토리지 I/O 에러 3회 재발
+                # (전류 스파이크 의심)로 기본 게인 복귀. 볼륨은 amixer 시스템 레벨로만 조절할 것.
+                res = subprocess.run(["mpg123", "-q", "-b", "1024", temp_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if res.returncode != 0:
                     # mpg123 실패 시 (설치가 안 되어 있는 등) 예외를 발생시켜 다음 단계(espeak)로 진입
                     raise RuntimeWarning("mpg123 execution failed")
@@ -59,8 +60,7 @@ def speak(text, cooldown=5.0):
 
         # 2단계: espeak 시스템 명령어로 출력 시도 (오프라인 백업)
         try:
-            # -a 200: 진폭 최대 (기본 100)
-            subprocess.run(["espeak", "-v", "ko", "-a", "200", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["espeak", "-v", "ko", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except Exception:
             pass
