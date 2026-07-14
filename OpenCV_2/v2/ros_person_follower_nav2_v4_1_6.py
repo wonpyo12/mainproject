@@ -242,7 +242,11 @@ EDGE_CLIP_MIN_HOLD = 0.35   # 전진 하한 35% 보장 (중앙 감속으로 0이
 EDGE_CLIP_CONE_DEG = 8.0    # 사람 거리 라이다 콘 ±15→±8° (코너 구조물 오인 감소)
 # 코너에서 콘을 좁혀도 간헐적으로 구조물이 읽히면 데드밴드(30~40cm) 정지↔전진이
 # 반복돼 "판단이 느린" 체감 발생 (07-14 실차) → 경계 잘림 중엔 저속 전진을 보장
-EDGE_CLIP_CREEP = 0.06      # 경계 잘림 + 데드밴드 정지 상황의 최소 전진 속도(m/s)
+EDGE_CLIP_CREEP = 0.10      # 경계 잘림 시 최소 전진 속도 (0.06→0.10: 실측 평균이 절반에 그침)
+# 실측(07-14): bbox가 경계에 닿았다 떨어졌다 깜빡이며(전환 418회/303초) creep이
+# 켜졌다 꺼졌다 → 가속 필터가 매번 리셋돼 평균 0.031m/s "찔끔찔끔".
+# → 한번 잘리면 이 시간 동안 edge 모드 유지(sticky)해 깜빡임 자체를 제거
+EDGE_STICKY_SEC = 1.0
 
 AVOID_RANGE_M  = 0.50    # 전방 ±50° 이 거리 이내 장애물부터 척력 조향 (보수적)
 AVOID_GAIN     = 0.35    # 점당 척력 계수 (v4_1_2의 0.45보다 부드럽게)
@@ -332,6 +336,7 @@ if _ROS2_OK:
             self.last_v = 0.0
             self.last_w = 0.0
             self.last_dist_cm = 0.0
+            self._edge_until = 0.0         # edge 모드 유지 만료 시각 (sticky)
             self._search_start = None      # 유실 탐색 회전 시작 시각
             self._search_dir = 1.0         # 유실 탐색 시작 방향 — 마지막으로 본 박스 쪽(+1 좌 / -1 우)
             self._nav_goal_handle = None   # 진행 중 Nav2 목표 핸들(취소용)
@@ -470,7 +475,11 @@ if _ROS2_OK:
             cx = (x1 + x2) / 2.0
             cx_norm = cx / frame_w
             # [v4_1_6] 화면 경계에 잘린 bbox = 코너 케이스 (사람 상반신 일부만 프레임에)
-            edge_clip = (x1 <= 2) or (x2 >= frame_w - 2)
+            # sticky: 한번 잘리면 EDGE_STICKY_SEC 동안 edge 모드 유지 (깜빡임 제거)
+            now_e = time.time()
+            if (x1 <= 2) or (x2 >= frame_w - 2):
+                self._edge_until = now_e + EDGE_STICKY_SEC
+            edge_clip = now_e < self._edge_until
             # 라이다 브리징용: 마지막 추적 방위/시각 기록
             self._last_bearing = (0.5 - cx_norm) * math.radians(70.0)
             self._last_seen_t = time.time()
