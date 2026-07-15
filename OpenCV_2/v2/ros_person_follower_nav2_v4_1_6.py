@@ -384,6 +384,15 @@ if _ROS2_OK:
 
         # ── 구독 콜백 ──
         def _amcl_cb(self, msg):
+            # [복귀 디버깅] 1초 간격 AMCL 위치 기록 — 복귀 궤적·위치 흔들림 분석용
+            p0 = msg.pose.pose
+            yaw0 = _quat_to_yaw(p0.orientation.x, p0.orientation.y,
+                                p0.orientation.z, p0.orientation.w)
+            now_p = time.time()
+            if now_p - getattr(self, "_pose_log_t", 0.0) >= 1.0:
+                self._pose_log_t = now_p
+                DBG.log("pose", x=round(p0.position.x, 3), y=round(p0.position.y, 3),
+                        yaw=round(math.degrees(yaw0), 1), state=self.state)
             if not self.has_start_pose:
                 p = msg.pose.pose
                 self.start_x = p.position.x
@@ -391,6 +400,8 @@ if _ROS2_OK:
                 self.start_yaw = _quat_to_yaw(p.orientation.x, p.orientation.y,
                                               p.orientation.z, p.orientation.w)
                 self.has_start_pose = True
+                DBG.log("nav", act="start_pose", x=round(self.start_x, 3),
+                        y=round(self.start_y, 3), yaw=round(math.degrees(self.start_yaw), 1))
                 self.get_logger().info(
                     f"시작 위치 저장: ({self.start_x:.2f}, {self.start_y:.2f}, "
                     f"{math.degrees(self.start_yaw):.0f}deg)")
@@ -645,6 +656,7 @@ if _ROS2_OK:
         def send_nav_goal(self, x, y, yaw):
             if not self.nav_client.wait_for_server(timeout_sec=2.0):
                 self.get_logger().warn("Nav2 액션 서버 없음 → 복귀 불가. FOLLOW 유지.")
+                DBG.log("nav", act="server_missing")
                 self.state = "FOLLOW"
                 return
             qx, qy, qz, qw = _yaw_to_quat(yaw)
@@ -656,6 +668,8 @@ if _ROS2_OK:
             goal.pose.pose.orientation.z = qz
             goal.pose.pose.orientation.w = qw
             self.get_logger().info(f"복귀 목표 전송: ({x:.2f}, {y:.2f})")
+            DBG.log("nav", act="goal_sent", x=round(float(x), 3), y=round(float(y), 3),
+                    yaw=round(math.degrees(yaw), 1), state=self.state)
             fut = self.nav_client.send_goal_async(goal)
             fut.add_done_callback(self._nav_resp_cb)
 
@@ -663,13 +677,20 @@ if _ROS2_OK:
             gh = future.result()
             if not gh.accepted:
                 self.get_logger().warn("복귀 목표 거부됨 → FOLLOW 복귀.")
+                DBG.log("nav", act="rejected")
                 self.state = "FOLLOW"
                 return
+            DBG.log("nav", act="accepted")
             self._nav_goal_handle = gh       # 취소 대비 핸들 보관
             gh.get_result_async().add_done_callback(self._nav_done_cb)
 
         def _nav_done_cb(self, future):
             self._nav_goal_handle = None
+            try:
+                _st = future.result().status   # 4=SUCCEEDED 5=CANCELED 6=ABORTED
+            except Exception:
+                _st = -1
+            DBG.log("nav", act="done", status=_st, state=self.state)
             if self.state == "RETURN":       # 사용자가 이미 '추종'으로 전환했으면 유지
                 self.get_logger().info("원점 도착 → 정지(STOPPED). 추종 재개는 앱 시작(QR) 또는 '추종' 입력.")
                 self.state = "STOPPED"       # 복귀 완료 후 자동 추종 금지 (다음 사용자 대기)
@@ -679,6 +700,7 @@ if _ROS2_OK:
         def cancel_nav(self):
             """진행 중인 Nav2 복귀 목표 취소 (/cmd_vel 중복 발행 방지)."""
             if self._nav_goal_handle is not None:
+                DBG.log("nav", act="cancel", state=self.state)
                 try:
                     self._nav_goal_handle.cancel_goal_async()
                 except Exception:
