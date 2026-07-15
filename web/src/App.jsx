@@ -13,7 +13,7 @@ import { MapView } from './views/MapView';
 import { fetchDashboard } from './api';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = 'http://192.168.0.17:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 
 
 const NAV = [
@@ -193,6 +193,24 @@ export default function App() {
 
     socket.on('connect', () => {
       console.log('[Socket] Global Web Admin connected');
+    });
+
+    // 로봇 안내 음성 중계 → 브라우저 TTS 재생 + 알림 표시 (예: "촬영을 시작합니다", "뒤돌아 주세요")
+    socket.on('robot:announce', (data) => {
+      const text = data && data.text;
+      if (!text) return;
+      console.log('[Socket] robot:announce:', text);
+      // 수신 확인용 알림 (음성이 차단돼도 눈으로 확인 가능)
+      setAlerts((prev) => [{
+        level: 'info', cart: data.robotSerialNumber || 'ROBOT',
+        ko: `🔊 ${text}`, mins: 0, timestamp: new Date().toISOString(),
+      }, ...prev]);
+      if (!window.speechSynthesis) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR';
+      u.rate = 1.0;
+      u.onerror = (e) => console.warn('[TTS] 재생 실패:', e.error);
+      window.speechSynthesis.speak(u);   // 연속 안내는 자동으로 순서대로 큐잉된다
     });
 
     socket.on('user:login', (data) => {

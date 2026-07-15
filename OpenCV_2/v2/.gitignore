@@ -6,3 +6,7 @@ robocart_profile_v3.json
 debug/
 *.jsonl
 
+# 모델 가중치 — 재다운로드 가능한 대용량 파일이라 저장소에 넣지 않음
+*.pt
+*.onnx
+*.onnx.data

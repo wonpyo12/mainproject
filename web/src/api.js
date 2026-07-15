@@ -1,4 +1,4 @@
-const BACKEND_URL = 'http://192.168.0.17:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 
 // 화면 표시용 고정 정보 (매장명/관리자) — 데이터 아님
 const STATIC_INFO = {

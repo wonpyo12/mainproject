@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = 'http://192.168.0.17:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 
 // 고객 쇼핑 세션 실시간 구독 훅 — 카메라 모니터링 화면용
 // QR 매칭 / RFID 스캔 / 결제 완료 때 백엔드가 room:admin 으로 쏘는
