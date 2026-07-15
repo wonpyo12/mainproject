@@ -7,6 +7,9 @@ import threading
 import urllib.request
 import os
 import math
+import json
+from datetime import datetime
+from pathlib import Path
 
 # ROS2 관련 라이브러리 임포트
 import rclpy
@@ -15,6 +18,39 @@ from rclpy.action import ActionClient
 from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
 from sensor_msgs.msg import LaserScan
 from nav2_msgs.action import NavigateToPose
+
+HERE = Path(__file__).resolve().parent
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 디버그 로그 — v4의 DebugLog 백포트 (버전 간 수치 비교용, debug/analyze_debug.py 로 분석)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DebugLog:
+    """인식/주행 이벤트를 debug/debug_logs/run_<ver>_*.jsonl 에 기록. 비활성화 시 no-op."""
+
+    def __init__(self, enabled: bool = False, ver: str = "v1"):
+        self.f = None
+        self.path = None
+        if enabled:
+            d = HERE / "debug" / "debug_logs"
+            d.mkdir(parents=True, exist_ok=True)
+            self.path = d / f"run_{ver}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            self.f = open(self.path, "w", encoding="utf-8", buffering=1)  # 줄 단위 flush
+
+    def log(self, ev: str, **kw):
+        if self.f is None:
+            return
+        kw["ev"] = ev
+        kw["t"] = round(time.time(), 3)
+        try:
+            self.f.write(json.dumps(kw, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+
+DBG = DebugLog(enabled=False)   # main()에서 활성화
+
 
 class PIDController:
     """
@@ -222,6 +258,7 @@ class VideoCaptureThreaded:
         self.src = src
         self.frame = None
         self.ret = False
+        self.rx_n = 0                    # 수신 프레임 카운터 (perf 로그의 rx_fps 용)
         self.running = True
         self.thread = threading.Thread(target=self.update, args=())
         self.thread.daemon = True
@@ -255,6 +292,7 @@ class VideoCaptureThreaded:
                         if frame is not None:
                             self.frame = frame
                             self.ret = True
+                            self.rx_n += 1
                             
             except Exception as e:
                 self.ret = False
@@ -272,6 +310,9 @@ class VideoCaptureThreaded:
 
     def read(self):
         return self.ret, self.frame
+
+    def rx_count(self):
+        return self.rx_n
 
     def isOpened(self):
         return self.running
@@ -354,6 +395,12 @@ def console_input_thread(node):
 
 
 def main():
+    global DBG
+    DBG = DebugLog(enabled=True, ver="v1")
+    if DBG.path:
+        print(f"[debug] 로그 기록: {DBG.path} (분석: python3 debug/analyze_debug.py)")
+    DBG.log("start", model="yolov8n-pose", cpu=os.cpu_count())
+
     # ── ROS2 초기화 ──
     rclpy.init()
     node = RobotController()
@@ -367,7 +414,7 @@ def main():
     input_thread.start()
 
     # ── 카메라 소스 설정 ──
-    PI_IP = "192.168.0.25"
+    PI_IP = "192.168.0.35"
     stream_url = f"http://{PI_IP}:5000/video_feed"
     
     print(f"[연동] 카메라 스트림 연결 중: {stream_url}")
@@ -450,6 +497,7 @@ def main():
                     final_cx, final_cy = None, None
                     final_body_height = None
                     final_annotated = None
+                    match_score = None          # 하이브리드(위치+색) 매칭 점수 (det 로그용)
                     
                     valid_candidates = []
                     
@@ -540,6 +588,7 @@ def main():
                             
                             if best_idx != -1 and max_score > 0.40:
                                 target_candidate = valid_candidates[best_idx]
+                                match_score = max_score
                                 if target_candidate['hist'] is not None:
                                     tracked_color_hist = 0.8 * tracked_color_hist + 0.2 * target_candidate['hist']
                                     cv2.normalize(tracked_color_hist, tracked_color_hist, 0, 1, cv2.NORM_MINMAX)
@@ -569,6 +618,12 @@ def main():
                         shared_last_body_height_ratio = final_body_height
                         shared_last_pose_landmarks = final_annotated
                         shared_inference_time_ms = tm_local.getTimeMilli()
+
+                    # [debug] 인식 판정 기록 — v1은 등록 개념이 없어 total=하이브리드 점수(재매칭 시만)
+                    DBG.log("det", det_ms=round(tm_local.getTimeMilli(), 1), reid_ms=0.0,
+                            cand=len(valid_candidates), thr=0.40, ok=detected,
+                            trk=detected, st="tracking" if detected else "lost",
+                            total=round(float(match_score), 3) if match_score is not None else None)
                         
                 except Exception as e:
                     print(f"[YOLO 스레드 에러] {e}")
@@ -585,15 +640,25 @@ def main():
     cached_cy = None
     cached_body_height_ratio = None
     prev_virtual_angular = 0.0
+    none_n = 0                                        # 스트림 끊김 카운터 (gap 로그)
+    perf_t, perf_frames, perf_rx0 = time.time(), 0, 0  # 5초 성능 스냅샷
 
     try:
         while cap.isOpened() and rclpy.ok():
             ret, frame = cap.read()
             if not ret:
+                none_n += 1
+                if none_n == 1:
+                    DBG.log("gap_start")
                 print("[Warning] 프레임을 읽어올 수 없습니다. 정지 명령을 보내고 대기합니다.")
                 node.send_stop()
                 time.sleep(0.5)
                 continue
+            if none_n >= 1:
+                # v1은 끊김당 0.5초 대기 → 분석 스크립트의 n*0.02초 환산에 맞춰 25배 기록
+                DBG.log("gap_end", n=none_n * 25)
+            none_n = 0
+            perf_frames += 1
 
             with frame_lock:
                 latest_frame = frame
@@ -605,6 +670,14 @@ def main():
             time_diff = current_time - prev_time
             fps = 1.0 / time_diff if time_diff > 0 else 0.0
             prev_time = current_time
+
+            # 5초마다 성능 스냅샷 (루프 fps / 카메라 수신 fps / 추론 시간)
+            if current_time - perf_t >= 5.0:
+                _rx = cap.rx_count() if hasattr(cap, "rx_count") else 0
+                DBG.log("perf", loop_fps=round(perf_frames / (current_time - perf_t), 1),
+                        rx_fps=round((_rx - perf_rx0) / (current_time - perf_t), 1),
+                        det_ms=round(inference_time_ms, 1), reid_ms=0.0)
+                perf_t, perf_frames, perf_rx0 = current_time, 0, _rx
 
             display_frame = frame.copy()
 
@@ -687,6 +760,13 @@ def main():
 
                     # 속도 명령 전송
                     node.send_velocity(virtual_linear, virtual_angular)
+                    if perf_frames % 3 == 0:    # 로그는 ≈수 Hz 로 샘플링
+                        DBG.log("cmd", v=round(virtual_linear, 3), w=round(virtual_angular, 3),
+                                dist=(round(lidar_distance * 100.0, 1)
+                                      if lidar_distance is not None else None),
+                                mode="LiDAR" if lidar_distance is not None else "Camera",
+                                err=round((last_person_cx - 0.5) * 2, 3),
+                                trk=True)
                     
                     # 오버레이 정보 그리기
                     cv2.putText(display_frame, f"Bearing Angle: {math.degrees(bearing_angle_rad):.1f} deg", (20, 80),

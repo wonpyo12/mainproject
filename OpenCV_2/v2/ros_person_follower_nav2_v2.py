@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import threading
 import time
@@ -81,6 +82,36 @@ def pick_yolo_onnx(imgsz: int):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 디버그 로그 — v4의 DebugLog 백포트 (버전 간 수치 비교용, debug/analyze_debug.py 로 분석)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DebugLog:
+    """인식/주행 이벤트를 debug/debug_logs/run_<ver>_*.jsonl 에 기록. 비활성화 시 no-op."""
+
+    def __init__(self, enabled: bool = False, ver: str = "v2"):
+        self.f = None
+        self.path = None
+        if enabled:
+            d = HERE / "debug" / "debug_logs"
+            d.mkdir(parents=True, exist_ok=True)
+            self.path = d / f"run_{ver}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            self.f = open(self.path, "w", encoding="utf-8", buffering=1)  # 줄 단위 flush
+
+    def log(self, ev: str, **kw):
+        if self.f is None:
+            return
+        kw["ev"] = ev
+        kw["t"] = round(time.time(), 3)
+        try:
+            self.f.write(json.dumps(kw, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+
+DBG = DebugLog(enabled=False)   # main()에서 --no-debug-log 아니면 활성화
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 분산 카메라 — 라즈베리파이 MJPEG(:5000) 수신 (작업순서 1번)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -97,6 +128,7 @@ class MjpegCamera:
     def __init__(self, url: str):
         self.url = url
         self._frame: np.ndarray | None = None
+        self._rx = 0                     # 수신 프레임 카운터 (perf 로그의 rx_fps 용)
         self._running = True
         self._th = threading.Thread(target=self._loop, daemon=True)
         self._th.start()
@@ -120,6 +152,7 @@ class MjpegCamera:
                         f = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
                         if f is not None:
                             self._frame = f
+                            self._rx += 1
             except Exception:
                 self._frame = None
             finally:
@@ -134,6 +167,9 @@ class MjpegCamera:
     def read(self):
         f = self._frame
         return f.copy() if f is not None else None
+
+    def rx_count(self):
+        return self._rx
 
     def opened(self):
         return self._running
@@ -441,6 +477,8 @@ def register(cam, yolo, reid, user_id, grace_sec: float = 5.0):
         profile["phases"][pname] = {"reid_emb": _avg_embed(embs),
                                     "color": _avg_color(cols)}
         print(f"[register] {pname}: {len(embs)} 샘플 수집")
+        DBG.log("register", phase=pname, n=len(embs), sec=3.0,
+                rx_fps=round(len(embs) / 3.0, 1))
 
     save_profile(profile)
     return profile
@@ -538,6 +576,8 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
     kcf_age = 0
     frame_count = 0
     fps_t, fps_n, fps_val = time.time(), 0, 0.0
+    none_n = 0                                        # 스트림 끊김 카운터 (gap 로그)
+    perf_t, perf_frames, perf_rx0 = time.time(), 0, 0  # 5초 성능 스냅샷
 
     avg = {"det": 0.0, "reid": 0.0}
     last_seq = 0
@@ -553,9 +593,25 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
     while True:
         frame = cam.read()
         if frame is None:
+            none_n += 1
+            if none_n == 5:
+                DBG.log("gap_start")
             time.sleep(0.02); continue
+        if none_n >= 5:
+            DBG.log("gap_end", n=none_n)
+        none_n = 0
         frame_count += 1
+        perf_frames += 1
         h_f, w_f = frame.shape[:2]
+
+        # 5초마다 성능 스냅샷 (루프 fps / 카메라 수신 fps / 추론 시간 이동평균)
+        _pnow = time.time()
+        if _pnow - perf_t >= 5.0:
+            _rx = cam.rx_count() if hasattr(cam, "rx_count") else 0
+            DBG.log("perf", loop_fps=round(perf_frames / (_pnow - perf_t), 1),
+                    rx_fps=round((_rx - perf_rx0) / (_pnow - perf_t), 1),
+                    det_ms=round(avg["det"], 1), reid_ms=round(avg["reid"], 1))
+            perf_t, perf_frames, perf_rx0 = _pnow, 0, _rx
 
         interp_alive = tracker.is_tracking and kcf.ok
         if (not interp_alive) or kcf_age >= KCF_MAX_AGE or frame_count % DETECT_INTERVAL == 0:
@@ -593,6 +649,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                       f"reid={detail['reid']*100:4.0f}% color={detail['color']*100:4.0f}% "
                       f"pos={detail['position']*100:4.0f}%  thr={thr*100:.0f}% "
                       f"=> {'MATCH' if matched else 'reject'} (cand={len(last_bboxes)})")
+            DBG.log("det", det_ms=round(det["det_ms"], 1), reid_ms=round(det["reid_ms"], 1),
+                    cand=len(last_bboxes), thr=thr, ok=matched,
+                    trk=tracker.is_tracking, st=tracker.status,
+                    total=round(total, 3) if detail is not None else None,
+                    reid=round(detail["reid"], 3) if detail is not None else None,
+                    color=round(detail["color"], 3) if detail is not None else None)
         elif interp_alive:
             kb = kcf.update(frame); kcf_age += 1
             if kb is not None:
@@ -642,6 +704,13 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
                 v, w = follower.compute(draw_bbox, w_f, h_f, tracker.is_tracking)
                 if frame_count % 3 == 0:        # ≈10Hz publish (매프레임 publish 오버헤드 방지)
                     follower.send_velocity(v, w)
+                    err_c = (((draw_bbox[0] + draw_bbox[2]) / 2 - w_f / 2) / (w_f / 2)
+                             if draw_bbox is not None else None)
+                    DBG.log("cmd", v=round(v, 3), w=round(w, 3),
+                            dist=round(follower.last_dist_cm, 1),
+                            mode=getattr(follower, "_dist_mode", "?"),
+                            err=round(err_c, 3) if err_c is not None else None,
+                            trk=tracker.is_tracking)
                 cv2.putText(frame,
                             f"WHEEL v={v:+.2f} w={w:+.2f} dist={follower.last_dist_cm:.0f}cm",
                             (6, h_f - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
@@ -689,7 +758,7 @@ def console_input_thread(follower):
 
 def parse_args():
     p = argparse.ArgumentParser(description="등록 사용자 추종 + Nav2 복귀 (분산)")
-    p.add_argument("--pi-ip", default="192.168.0.23", help="라즈베리파이 IP (MJPEG :5000)")
+    p.add_argument("--pi-ip", default="192.168.0.35", help="라즈베리파이 IP (MJPEG :5000)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
     p.add_argument("--imgsz", type=int, default=320,
@@ -702,12 +771,21 @@ def parse_args():
     p.add_argument("--grace", type=float, default=5.0, help="촬영 시작 전 준비 시간(초)")
     p.add_argument("--no-drive", action="store_true",
                    help="ROS2 주행 비활성(인식만 확인). cmd_vel/Nav2 미사용")
+    p.add_argument("--no-debug-log", action="store_true",
+                   help="디버그 jsonl 기록 비활성화")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     stream_url = args.stream_url or f"http://{args.pi_ip}:5000/video_feed"
+
+    global DBG
+    DBG = DebugLog(enabled=not args.no_debug_log, ver="v2")
+    if DBG.path:
+        print(f"[debug] 로그 기록: {DBG.path} (분석: python3 debug/analyze_debug.py)")
+    DBG.log("start", imgsz=args.imgsz, reid_model="x0_25",
+            mirror=False, invert_turn=False, cpu=os.cpu_count())
 
     print("[init] 모델 로딩...")
     yolo_path, yolo_sz = pick_yolo_onnx(args.imgsz)

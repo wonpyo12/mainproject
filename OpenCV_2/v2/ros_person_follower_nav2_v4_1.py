@@ -102,7 +102,7 @@ class DebugLog:
         if enabled:
             d = HERE / "debug" / "debug_logs"
             d.mkdir(exist_ok=True)
-            self.path = d / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            self.path = d / f"run_v4_1_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             self.f = open(self.path, "w", encoding="utf-8", buffering=1)  # 줄 단위 flush
 
     def log(self, ev: str, **kw):
@@ -1321,7 +1321,7 @@ def console_input_thread(follower):
 
 def parse_args():
     p = argparse.ArgumentParser(description="등록 사용자 추종 + Nav2 복귀 (분산)")
-    p.add_argument("--pi-ip", default="192.168.0.29", help="라즈베리파이 IP (MJPEG :5000)")
+    p.add_argument("--pi-ip", default="192.168.0.35", help="라즈베리파이 IP (MJPEG :5000)")
     p.add_argument("--esp-ip", default=None, help="ESP8266 (RFID & LED) IP 주소 (예: 192.168.0.xx)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
@@ -1362,7 +1362,7 @@ def main() -> int:
     DBG = DebugLog(enabled=not args.no_debug_log)
     if DBG.path:
         print(f"[debug] 로그 기록: {DBG.path} (분석: python3 analyze_debug.py)")
-    DBG.log("start", imgsz=args.imgsz, reid_model=args.reid_model,
+    DBG.log("start", ver="v4_1", imgsz=args.imgsz, reid_model=args.reid_model,
             mirror=args.mirror, invert_turn=args.invert_turn,
             cpu=os.cpu_count())
 
