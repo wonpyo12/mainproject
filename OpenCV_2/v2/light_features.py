@@ -36,6 +36,17 @@ LOST_MAX           = 60     # 유실 허용 프레임 (30에서 60으로 연장�
 SCORE_WINDOW       = 10     # 이동 평균 창
 MIN_CONFIRM_FRAMES    = 4   # 추종 시작 전 연속 매칭 프레임 (진입 엄격: 원본 3→4)
 SEARCH_CONFIRM_FRAMES = 3   # 완전 유실 후 재인식 시 연속 매칭 프레임 (5→3: 촬영 직후 바로 탐색모드 진입 방지)
+# [이슈 #48] 유실 후 재획득 실패 대책 — 탐색 중 color 히스토그램이 붕괴(조명/각도/뒷모습)해
+# total이 SEARCH_MATCH_THR에 영구 미달하는 문제. 재획득에 한해 ReID 단독으로 구제한다.
+# 근거(07-13 주행 로그): 탐색 중 본인 ReID p50=0.611/p90=0.683, 타인 차단선(REID_FLOOR)=0.55,
+# 추적 중 본인 p10=0.627 → 그 사이 0.62 선택. SEARCH_CONFIRM_FRAMES 연속 요구가 오인식을 이중 차단.
+SEARCH_REID_RESCUE = 0.62   # 재획득 전용 ReID 단독 임계 (had_track=True 인 탐색에만 적용)
+# [온라인 프로필 보강] 주행 중 고신뢰 프레임의 임베딩을 자동 수확 — 등록 순간의 표본
+# 다양성이 사용자 협조에 좌우되는 문제(복불복) 제거. 등록 원본(reid_embs)은 불변으로
+# 보존하고, 수확분은 별도 풀(reid_embs_live)에 오래된 것부터 교체 순환. 세션 한정(파일 저장 안 함).
+HARVEST_REID_MIN   = 0.75   # 수확 허용 ReID 하한 — 유지 임계(0.60)보다 훨씬 엄격해 드리프트 차단
+HARVEST_EXTRA_MAX  = 8      # phase당 수확 표본 상한 (12 등록 + 8 수확 = 최대 20 비교, µs 단위)
+HARVEST_INTERVAL_S = 2.0    # 수확 최소 간격(초) — 연속 프레임 중복 수확 방지, 시간 다양성 확보
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -119,6 +130,7 @@ class TrackingState:
         self._confirm = 0
         self.status = "searching"
         self._from_search = True   # 탐색 후 재인식 여부 (confirm 프레임 수 결정)
+        self.had_track = False     # 이번 세션에서 한 번이라도 추적 성립 여부 — ReID 구제는 재획득에만 허용
 
     @property
     def avg_score(self) -> float:
@@ -133,6 +145,7 @@ class TrackingState:
         self._history.clear()
         self.status = "searching"
         self._from_search = True
+        self.had_track = False
 
     def update(self, matched: bool, bbox=None, score: float = 0.0) -> None:
         if matched and bbox is not None:
@@ -144,6 +157,7 @@ class TrackingState:
                 self._confirm += 1
                 if self._confirm >= req:
                     self.is_tracking = True
+                    self.had_track = True
                     self._from_search = False
                     self.status = "tracking"
                 else:
