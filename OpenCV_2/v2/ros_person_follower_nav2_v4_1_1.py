@@ -291,6 +291,7 @@ if _ROS2_OK:
             self.create_subscription(Empty, "/robocart/wait", self._wait_cb, 10)
             self.create_subscription(Empty, "/robocart/resume", self._resume_cb, 10)
             self.create_subscription(String, "/robocart/return", self._return_cb, 10)
+            self.create_subscription(Empty, "/robocart/reset", self._reset_cb, 10)
 
             self.cmd_vel_pub = self.create_publisher(Twist, topic, 10)
             self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
@@ -349,10 +350,20 @@ if _ROS2_OK:
                     self.is_registered = False  # 다음 사용자를 위해 등록 리셋
                     self.send_stop()
                     set_robot_led(self.esp_ip, "RUNNING")
-                    if not self.has_start_pose:
-                        self.get_logger().warn("AMCL 시작 위치 미저장 → (0,0) 복귀 시도.")
-                    self.send_nav_goal(self.start_x, self.start_y, self.start_yaw)
-                    self.get_logger().info("[Cmd] 앱/웹 복귀(RETURN) 명령 수신 -> RETURN 상태 전환 (등록 리셋). LED 초록불.")
+                    # [07-15] 백엔드 복귀의 Nav2 goal은 RPi return_controller가 전담.
+                    # 여기서도 쏘면 두 goal이 선점 경쟁 — 07-15 로그(goal_sent 직후 0.1초만에
+                    # status 6 ABORTED = RPi goal에 선점)로 확인. 상태 전환·정지만 수행하고
+                    # 복귀 완료는 return_controller의 /robocart/reset 수신으로 처리.
+                    self.get_logger().info("[Cmd] 복귀(RETURN) 수신 -> 정지·RETURN 전환. 주행은 RPi return_controller 전담.")
+
+        def _reset_cb(self, msg):
+            """[07-15] RPi return_controller가 도킹 도착 시 발행 — 다음 손님 대기 상태로."""
+            DBG.log("ros_cmd", cmd="reset", prev_state=self.state)
+            if self.state == "RETURN":
+                self.state = "STOPPED"
+                self.send_stop()
+                set_robot_led(self.esp_ip, "STOPPED")
+                self.get_logger().info("[Cmd] 복귀 완료(reset) 수신 -> STOPPED. 다음 사용자 대기.")
 
         # ── 구독 콜백 ──
         def _amcl_cb(self, msg):
@@ -1048,6 +1059,12 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
             worker = DetectionWorker(yolo, reid, face, profile, use_face)
             worker.start()
             follower.is_registered = True
+            # [07-15] 촬영 직후 바로 출발하지 않고 5초 대기 — 사용자가 자세/위치 잡을 시간
+            speak_on_pi(follower.pi_ip, "5초 후 추종을 시작합니다.")
+            _t5 = time.time() + 5.0
+            while time.time() < _t5:
+                cam.read()          # 대기 중 프레임 소모 (스트림 밀림 방지)
+                time.sleep(0.05)
             follower.state = "FOLLOW"
             set_robot_led(follower.esp_ip, "STANDBY")
             tracker.reset(); kcf.deinit(); reg_det_bbox = None
