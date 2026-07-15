@@ -646,7 +646,9 @@ def speak_on_pi(pi_ip, text):
             import urllib.parse
             import urllib.request
             encoded_text = urllib.parse.quote(text)
-            url = f"http://{pi_ip}:5000/speak?text={encoded_text}"
+            # [07-15 백포트] "IP" 또는 "IP:포트" 허용 — 키오스크 음성 이관용 (주행 로직 무변경)
+            host = pi_ip if ":" in str(pi_ip) else f"{pi_ip}:5000"
+            url = f"http://{host}/speak?text={encoded_text}"
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=1.5) as response:
                 pass
@@ -1386,6 +1388,8 @@ def console_input_thread(follower):
 def parse_args():
     p = argparse.ArgumentParser(description="등록 사용자 추종 + Nav2 복귀 (분산)")
     p.add_argument("--pi-ip", default="192.168.0.35", help="라즈베리파이 IP (MJPEG :5000)")
+    p.add_argument("--speak-ip", default=None,
+                   help="음성 안내 수신 서버 — 'IP' 또는 'IP:포트' (예: 192.168.0.22:5001). 미지정 시 pi-ip")
     p.add_argument("--esp-ip", default=None, help="ESP8266 (RFID & LED) IP 주소 (예: 192.168.0.xx)")
     p.add_argument("--stream-url", default=None,
                    help="직접 지정 시 우선 (기본: http://<pi-ip>:5000/video_feed)")
@@ -1420,6 +1424,7 @@ def parse_args():
 def main() -> int:
     args = parse_args()
     stream_url = args.stream_url or f"http://{args.pi_ip}:5000/video_feed"
+    speak_ip = args.speak_ip or args.pi_ip
 
     global DBG, RECORD_SEC
     RECORD_SEC = args.record_sec
@@ -1462,7 +1467,7 @@ def main() -> int:
                   "source /opt/ros/humble/setup.bash 후 재실행하면 주행됩니다.")
         else:
             rclpy.init()
-            follower = RobotController(esp_ip=args.esp_ip, pi_ip=args.pi_ip,
+            follower = RobotController(esp_ip=args.esp_ip, pi_ip=speak_ip,
                                        ang_sign=-1.0 if args.invert_turn else 1.0)
             ex = rclpy.executors.MultiThreadedExecutor()
             ex.add_node(follower)
@@ -1493,7 +1498,7 @@ def main() -> int:
         else:
             # --no-drive 등 ROS2 비활성이면 앱 신호를 받을 수 없어 즉시 촬영으로 폴백
             print("[register] 경고: 주행(ROS2) 비활성 상태라 앱 QR 신호를 받을 수 없어 즉시 촬영합니다.")
-            profile = register(cam, yolo, reid, args.user_id, grace_sec=args.grace, pi_ip=args.pi_ip)
+            profile = register(cam, yolo, reid, args.user_id, grace_sec=args.grace, pi_ip=speak_ip)
     elif profile is None:
         # 프로필 파일이 아예 없으면 빈 프로필로 대기
         profile = {"user_id": args.user_id, "phases": {}}
