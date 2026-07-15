@@ -1060,7 +1060,7 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
             worker.start()
             follower.is_registered = True
             # [07-15] 촬영 직후 바로 출발하지 않고 5초 대기 — 사용자가 자세/위치 잡을 시간
-            speak_on_pi(follower.pi_ip, "5초 후 추종을 시작합니다.")
+            # (음성 안내 없음 — "촬영이 끝났습니다"가 마지막 TTS)
             _t5 = time.time() + 5.0
             while time.time() < _t5:
                 cam.read()          # 대기 중 프레임 소모 (스트림 밀림 방지)
