@@ -175,6 +175,23 @@ class TcpServo:
                 pass
 
 
+def make_speaker(pi_host: str):
+    """라파 TTS(/speak) 호출 함수 — 라파 스피커 + (스트리머가 중계) 관리자 웹 동시 재생.
+
+    실패해도 등록/추적 흐름을 막지 않도록 백그라운드 스레드에서 쏘고 무시한다.
+    """
+    def speak(text: str):
+        def _run():
+            try:
+                import urllib.parse
+                url = f"http://{pi_host}:5000/speak?text=" + urllib.parse.quote(text)
+                urllib.request.urlopen(url, timeout=2.0).close()
+            except Exception as e:
+                print(f"[win] 음성 안내 실패({e}): {text}")
+        threading.Thread(target=_run, daemon=True).start()
+    return speak
+
+
 def cleanup_session():
     """세션 종료 — 일회용 등록 데이터 삭제."""
     try:
@@ -194,12 +211,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pi", default=os.environ.get("PI_HOST", "YOUR_PI_IP"), help="라파 IP")
     ap.add_argument("--cam-port", type=int, default=8090)
+    ap.add_argument("--cam-url", default=None,
+                    help="카메라 MJPEG 전체 URL 직접 지정 (예: http://<pi>:5000/video_feed). "
+                         "web_stream(:8090) 없이 pi_camera_streamer 스트림 재사용 시 사용")
     ap.add_argument("--cmd-port", type=int, default=9998)
     ap.add_argument("--wheels", action="store_true", help="바퀴 구동 활성화(주의)")
     ap.add_argument("--user-id", default="owner_001")
     args = ap.parse_args()
 
-    cam_url = f"http://{args.pi}:{args.cam_port}/stream"
+    cam_url = args.cam_url or f"http://{args.pi}:{args.cam_port}/stream"
     print(f"[win] 카메라: {cam_url}")
     cam = HttpCamera(cam_url)
     servo = TcpServo(args.pi, args.cmd_port, wheels=args.wheels)
@@ -215,16 +235,20 @@ def main() -> int:
     pose = core.create_pose_estimator()
     reid = core.create_reid_model()
 
-    # 세션 시작: 초기화 → 자동 등록
+    # 세션 시작: 초기화 → 자동 등록 (음성 안내는 라파 TTS → 웹 동시 재생)
+    speak = make_speaker(args.pi)
     cleanup_session()
     for _ in range(3):
         servo.center(); time.sleep(0.15)
     print("[session] 자동 등록 — 화면 보며 정면→뒤돌기")
-    if not core.register_user(yolo, hog, pose, reid, user_id=args.user_id):
+    if not core.register_user(yolo, hog, pose, reid, user_id=args.user_id,
+                              announce=speak):
         print("[session] 등록 실패 — 종료")
+        speak("등록에 실패했습니다.")
         cleanup_session(); servo.close(); return 1
     profile = core.load_profile()
     print(f"[session] 등록 완료 [{profile['user_id']}] → 추적 시작")
+    speak("촬영이 끝났습니다. 추적을 시작합니다.")
 
     try:
         core.run_tracking(yolo, hog, pose, reid, profile, servo=servo)

@@ -857,10 +857,11 @@ CAPTURE_FLASH   = 1.2    # 촬영 완료 표시 시간 (초)
 
 
 def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
-                  user_id: str = "owner_001") -> bool:
+                  user_id: str = "owner_001", announce=None) -> bool:
     """앞/뒤 자동 촬영 후 등록 프로필(JSON)을 저장합니다.
 
     흐름: 사람 감지 → 3초 카운트다운 → 자동 촬영 → 뒤로 돌기 안내 → 반복
+    announce: 단계별 음성 안내 콜백 (텍스트 1개 인자, 예: 라파 TTS)
     """
     DATA_DIR.mkdir(exist_ok=True)
     (SAMPLES_DIR / "front").mkdir(parents=True, exist_ok=True)
@@ -942,6 +943,9 @@ def register_user(yolo, hog_fallback, pose: PoseLandmarker, reid_model,
         for stage_idx, (sname, slabel) in enumerate(stages):
             countdown_start: float | None = None
             print(f"[{stage_idx+1}/{len(stages)}] {slabel}")
+            if announce:
+                announce("사진을 촬영합니다. 정면을 바라봐 주세요." if sname == "front"
+                         else "뒤돌아 주세요.")
 
             # ── 카운트다운 & 자동 촬영 ────────────────────────────────────────
             captured = False

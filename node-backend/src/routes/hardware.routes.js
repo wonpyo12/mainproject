@@ -16,4 +16,7 @@ router.post('/pose', hardwareController.updatePose);
 router.get('/pose', hardwareController.getPose);
 router.post('/telemetry', hardwareController.updateTelemetry);
 
+// [WebSocket] 로봇 안내 음성 중계 — 라파가 POST 하면 관리자 웹 브라우저가 TTS로 재생
+router.post('/announce', hardwareController.announce);
+
 module.exports = router;

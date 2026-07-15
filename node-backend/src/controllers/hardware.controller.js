@@ -366,4 +366,27 @@ const videoFeed = (req, res) => {
   proxyReq.end();
 };
 
-module.exports = { qrScan, rfidScan, videoFeed, updatePose, getPose, updateTelemetry };
+// ───────────────────────────────────────────────
+// POST /api/hardware/announce
+//   로봇(라파 TTS)이 말하는 안내 문구를 관리자 웹으로 중계 → 브라우저 음성 재생
+//   Body: { text: string, robotSerialNumber?: string }
+// ───────────────────────────────────────────────
+const announce = (req, res) => {
+  const { text, robotSerialNumber } = req.body;
+  if (!text || !String(text).trim()) {
+    return res.status(400).json({ success: false, message: 'text가 필요합니다.' });
+  }
+  const io = req.app.get('io');
+  io.to('room:admin').emit('robot:announce', {
+    text: String(text).trim(),
+    robotSerialNumber: robotSerialNumber || null,
+    at: new Date().toISOString(),
+  });
+  // 진단용: room:admin 에 붙어 있는 관리자 웹 소켓 수
+  const adminRoom = io.sockets.adapter.rooms.get('room:admin');
+  const adminCount = adminRoom ? adminRoom.size : 0;
+  console.log(`[Announce] "${String(text).trim()}" → 관리자 ${adminCount}명에게 방송`);
+  return res.status(200).json({ success: true, adminCount });
+};
+
+module.exports = { qrScan, rfidScan, videoFeed, updatePose, getPose, updateTelemetry, announce };

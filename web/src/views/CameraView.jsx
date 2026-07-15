@@ -11,7 +11,7 @@ import { useRobotSession } from '../hooks/useRobotSession';
 import { resetRobotSession } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
-const BACKEND_URL = 'http://192.168.0.17:3000';
+const BACKEND_URL = 'http://192.168.0.22:3000';
 
 export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
