@@ -44,7 +44,7 @@ class ReturnController(Node):
         self.declare_parameter("home_pose.x", 0.0)
         self.declare_parameter("home_pose.y", 0.0)
         self.declare_parameter("home_pose.yaw", 0.0)
-        self.declare_parameter("backend_url", "http://192.168.0.17:3000")
+        self.declare_parameter("backend_url", "http://192.168.0.22:3000")
         self.declare_parameter("robot_serial", "CartMe-ROS2-08")
 
         self.backend = self.get_parameter("backend_url").value.rstrip("/")

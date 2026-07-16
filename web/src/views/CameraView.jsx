@@ -8,10 +8,9 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { STATUS } from '../data';
 import { useRobotSession } from '../hooks/useRobotSession';
-import { resetRobotSession } from '../api';
+import { resetRobotSession, BACKEND_URL } from '../api';
 
 const won = (n) => '₩' + (n || 0).toLocaleString('ko-KR');
-const BACKEND_URL = 'http://192.168.0.17:3000';
 
 export function CameraView({ robots = [], onTitleClick }) {
   const [streamError, setStreamError] = useState(false);
