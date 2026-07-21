@@ -100,6 +100,14 @@ const completeOrder = async (req, res) => {
       [itemValues]
     );
 
+    // [MySQL] 결제 수량만큼 재고 차감 (음수 방지: 남은 재고 이상은 0 으로 고정)
+    for (const item of cartItems) {
+      await conn.query(
+        'UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ?',
+        [item.qty, item.productId]
+      );
+    }
+
     await conn.commit();
     conn.release();
 
