@@ -2068,7 +2068,9 @@ private fun ShoppingScreen(
             Column(
                 modifier = Modifier.fillMaxWidth()
                     .padding(horizontal = 14.dp)
-                    .padding(bottom = 14.dp, top = 4.dp)
+                    // 하단 여백 확대 — 결제하기 버튼이 시스템 제스처(홈 바) 영역과 겹쳐
+                    // 탭이 씹히던 문제 방지
+                    .padding(bottom = 28.dp, top = 4.dp)
                     .shadow(10.dp, RoundedCornerShape(24.dp), spotColor = Navy.copy(alpha = 0.3f))
                     .clip(RoundedCornerShape(24.dp)).background(Surface)
                     .border(2.dp, Navy, RoundedCornerShape(24.dp))
@@ -2350,11 +2352,6 @@ private fun PaymentScreen(
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(RCard)).background(Surface)
                     .border(2.dp, Navy, RoundedCornerShape(RCard)).padding(18.dp)) {
                     AmountRow("상품 금액", "${won(total)}원")
-                    Spacer(Modifier.height(13.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("배송비", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
-                        Text("무료", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AmberInk)
-                    }
                     Spacer(Modifier.height(14.dp))
                     Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
                     Spacer(Modifier.height(14.dp))
