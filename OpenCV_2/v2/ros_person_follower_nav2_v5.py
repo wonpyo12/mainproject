@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-ros_person_follower_nav2_v4 — 등록 사용자 인식 + 추종 + Nav2 원점 복귀 (분산 처리판)
+ros_person_follower_nav2_v5 — 등록 사용자 인식 + 추종 + Nav2 원점 복귀 (분산 처리판)
 
-v2 대비 변경
-  - ReID 모델 OSNet-x0.25 → OSNet-x1.0 교체 (임베딩 품질↑, 인식률 향상 목적).
-    ※ x0.25↔x1.0 임베딩은 비호환 → 프로필 분리(robocart_profile_v3.json), 재등록 필요.
+버전 이력
+  - v3 : ReID 모델 OSNet-x0.25 → OSNet-x1.0 교체 (임베딩 품질↑).
+         ※ x0.25↔x1.0 임베딩은 비호환 → 프로필 분리(robocart_profile_v3.json), 재등록 필요.
+  - v4 : 앱/웹 연동(정지·재개·복귀 토픽), ESP8266 LED 상태 표시, 라파 TTS 음성 안내,
+         라이다 브리징·예측 조향·가속도 제한 등 주행 안정화.
+  - v5 : 최종 확정본. 촬영 후 5초 무음 대기 출발, 백엔드 복귀 Nav2 goal을 RPi
+         return_controller로 단일화(선점 경쟁 제거), /robocart/reset 구독,
+         유실 재획득 구제(ReID 단독 0.62) + 온라인 프로필 보강.
 
 설계
   - 인식부: robocart_light(YOLOv8n-ONNX + OSNet-ONNX + 색상) 파이프라인을 그대로 이식.
-            DetectionWorker(비동기 검출) + KCF 보간 + 등록(앞/뒤) + ReID/색상/위치 가중 스코어링.
+            DetectionWorker(비동기 검출) + MOSSE 보간 + 등록(앞/뒤) + ReID/색상/위치 가중 스코어링.
             → "아무나"가 아니라 '등록된 1명'만 추종한다.
   - 영상부: 라즈베리파이 pi_camera_streamer.py 의 MJPEG(:5000)을 VM이 받아 추론(분산 처리).
-            (작업순서 1번: 로컬 카메라 → 분산 MJPEG 수신으로 교체)
-  - 주행부: ros_person_follower_nav2.py 의 주행/복귀 기능을 RobotController 한 노드로 통합.
+  - 주행부: 주행/복귀 기능을 RobotController 한 노드로 통합.
             FOLLOW = 인식 bbox → /cmd_vel(Twist) P제어,  RETURN = Nav2 navigate_to_pose 복귀.
-            터미널에 '복귀'/'추종' 입력으로 모드 전환(원본과 동일 UX).
+            터미널에 '복귀'/'추종' 입력으로 모드 전환.
 
 추가 기능
   - 재등록 시 기존 프로필 파일을 먼저 삭제(기록 누적 방지).
@@ -24,7 +28,8 @@ v2 대비 변경
   source /opt/ros/humble/setup.bash
   export TURTLEBOT3_MODEL=burger
   # (선택) Nav2 복귀를 쓰려면 별도 터미널에서 navigation2 + rviz 먼저 기동
-  python3 ros_person_follower_nav2_v4.py --pi-ip 192.168.0.23 --register
+  python3 ros_person_follower_nav2_v5.py --pi-ip <라파IP> --esp-ip <ESP IP> \
+      --speak-ip <키오스크IP>:5001 --register
 
   q : 종료 / 터미널에 '복귀' 또는 '추종' 입력 : 모드 전환
 
@@ -36,7 +41,6 @@ import argparse
 import json
 import math
 import os
-import sys
 import threading
 import time
 import urllib.request
@@ -55,7 +59,7 @@ try:
     from rclpy.node import Node
     from rclpy.action import ActionClient
     from rclpy.qos import qos_profile_sensor_data
-    from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
+    from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
     from sensor_msgs.msg import LaserScan
     from nav2_msgs.action import NavigateToPose
     _ROS2_OK = True
@@ -78,8 +82,10 @@ YOLO_ONNX_BY_SZ = {320: MODELS_DIR / "yolov8n.onnx",
 
 DETECT_INTERVAL = 8      # 검출 사이 KCF 보간 프레임 수
 KCF_MAX_AGE     = 40     # KCF 단독 보간 허용 최대 (초과 시 강제 재검출)
+# 이 시간(초)보다 오래된 프레임은 없는 것으로 처리 — 끊긴 스트림으로 주행 판단 방지
+FRAME_STALE_SEC = 2.0
 
-WINDOW = "robocart v3 - Registered User Follow + Nav2"
+WINDOW = "robocart v5 - Registered User Follow + Nav2"
 
 
 def pick_yolo_onnx(imgsz: int):
@@ -190,9 +196,9 @@ class MjpegCamera:
                 time.sleep(0.3)               # 재연결 대기 (1.0→0.3: 끊김 시 공백 단축)
 
     def read(self):
-        # 2초 이상 오래된 프레임은 없는 것으로 처리 (끊긴 스트림으로 주행 판단 방지)
+        # 오래된 프레임(FRAME_STALE_SEC 초과)은 없는 것으로 처리 (끊긴 스트림으로 주행 판단 방지)
         f = self._frame
-        if f is None or time.time() - self._frame_at > 2.0:
+        if f is None or time.time() - self._frame_at > FRAME_STALE_SEC:
             return None
         return f.copy()
 
@@ -234,6 +240,13 @@ FRONT_STOP_M = 0.25      # 전방 라이다 이 거리 이내 장애물이면 �
 SEARCH_ANG         = 0.20   # 탐색 회전 각속도(rad/s)
 SEARCH_HALF_PERIOD = 15.7   # 한 방향 회전 지속(초) — 좌우 180도(π rad) 회전: π/SEARCH_ANG ≈ 15.7초
 SEARCH_START_DELAY = 5.0   # 유실 후 이 시간(초) 동안은 정지 대기, 넘겨야 탐색 회전 시작
+# 유실 중 후보 점수가 이 값을 넘으면 탐색 회전을 멈추고 제자리에서 confirm 기회를 준다
+# (회전이 재인식을 방해하는 것 방지). 확정 임계는 light_features 의 SEARCH_MATCH_THR.
+SOFT_MATCH_THR     = 0.63
+
+# 세션 운영
+AUTO_RETURN_SEC        = 60.0  # 이 시간(초) 동안 등록자 미인식이면 자동 원점 복귀
+POST_REGISTER_WAIT_SEC = 5.0   # 촬영 완료 후 출발까지 대기(초) — 사용자가 자세·위치 잡을 시간
 
 # 등록 촬영: 방향(front/back)당 최소 샘플 수 — 미달이면 REG_MAX_SEC까지 수집 연장
 REG_MIN_SAMPLES = 20
@@ -277,7 +290,7 @@ if _ROS2_OK:
 
         def __init__(self, topic: str = "cmd_vel", esp_ip: str = None, pi_ip: str = None,
                      ang_sign: float = 1.0):
-            super().__init__("person_follower_nav2_v3")
+            super().__init__("person_follower_nav2_v5")
             self.esp_ip = esp_ip
             self.pi_ip = pi_ip
             self.ang_sign = ang_sign   # 회전 방향 반전용 (-1.0: 카메라 미러/모터 배선 반대일 때)
@@ -314,7 +327,7 @@ if _ROS2_OK:
             self._search_start = None      # 유실 탐색 회전 시작 시각
             self._search_dir = 1.0         # 유실 탐색 시작 방향 — 마지막으로 본 박스 쪽(+1 좌 / -1 우)
             self._nav_goal_handle = None   # 진행 중 Nav2 목표 핸들(취소용)
-            self.get_logger().info(f"RobotController v3 준비 (FOLLOW + Nav2 RETURN). ESP_IP: {self.esp_ip}")
+            self.get_logger().info(f"RobotController v5 준비 (FOLLOW + Nav2 RETURN). ESP_IP: {self.esp_ip}")
             
             # 구동 시작 시 정지 상태(빨간불)로 대기
             set_robot_led(self.esp_ip, "STOPPED")
@@ -1009,8 +1022,23 @@ class DetectionWorker(threading.Thread):
 # 추종 루프 (cv2.imshow 표시 + 인식률 % + 주행 연동)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
-                 just_registered=False):
+def interp_step(kcf, tracker, frame, new_frame, kcf_age):
+    """검출 공백 구간의 bbox 보간 한 스텝. → (draw_bbox, interp, kcf_age)
+
+    카메라 수신(≈9fps)보다 루프가 훨씬 빨라 같은 프레임이 반복 처리되므로,
+    새 프레임일 때만 트래커를 돌리고 같은 프레임이면 직전 보간 박스를 재사용한다.
+    """
+    if new_frame:
+        kb = kcf.update(frame)
+        kcf_age += 1
+    else:
+        kb = tracker.last_bbox
+    if kb is None:
+        return None, False, kcf_age
+    tracker.last_bbox = kb
+    return kb, True, kcf_age
+
+def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None):
     tracker = LF.TrackingState()
     last_harvest = {}   # 온라인 프로필 보강 — phase별 마지막 수확 시각
     # [sh 인식] 촬영 직후 빠른 진입(warm_start) 미사용 — sh 원본대로 진입도 동일 기준(from_search) 적용
@@ -1059,9 +1087,9 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
             worker = DetectionWorker(yolo, reid, face, profile, use_face)
             worker.start()
             follower.is_registered = True
-            # [07-15] 촬영 직후 바로 출발하지 않고 5초 대기 — 사용자가 자세/위치 잡을 시간
+            # [07-15] 촬영 직후 바로 출발하지 않고 대기 — 사용자가 자세/위치 잡을 시간
             # (음성 안내 없음 — "촬영이 끝났습니다"가 마지막 TTS)
-            _t5 = time.time() + 5.0
+            _t5 = time.time() + POST_REGISTER_WAIT_SEC
             while time.time() < _t5:
                 cam.read()          # 대기 중 프레임 소모 (스트림 밀림 방지)
                 time.sleep(0.05)
@@ -1111,14 +1139,15 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
         # [기능 2] 복귀(RETURN) 중엔 추종 연산 정지 (SLAM/Nav2 전용). FOLLOW→RETURN 전환 시 추적 리셋.
         cur_state = follower.state if follower is not None else "FOLLOW"
         
-        # 1분(60초) 이상 사람 미인식 시 자동 원점 복귀 트리거
-        if (follower is not None 
-                and cur_state == "FOLLOW" 
-                and follower.is_registered 
-                and last_seen_t is not None 
-                and (time.time() - last_seen_t > 60.0)):
-            
-            follower.get_logger().info("1분 동안 사람 미인식 -> 자동 원점 복귀를 수행합니다.")
+        # AUTO_RETURN_SEC 이상 사람 미인식 시 자동 원점 복귀 트리거
+        if (follower is not None
+                and cur_state == "FOLLOW"
+                and follower.is_registered
+                and last_seen_t is not None
+                and (time.time() - last_seen_t > AUTO_RETURN_SEC)):
+
+            follower.get_logger().info(
+                f"{AUTO_RETURN_SEC:.0f}초 동안 사람 미인식 -> 자동 원점 복귀를 수행합니다.")
             DBG.log("ros_cmd", cmd="auto_return_60s", prev_state="FOLLOW")
             follower.state = "RETURN"
             follower.is_registered = False  # 다음 사용자를 위해 등록 리셋
@@ -1225,13 +1254,8 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
                 # (lost N/LOST_MAX 유예 중) KCF 보간으로 초록 박스를 유지하고,
                 # 실제로 추적이 끊겼을 때(is_tracking=False)만 폐기 → "잠깐 유실→주황/탐색" 방지.
                 if tracker.is_tracking and kcf.ok:
-                    if new_frame:
-                        kb = kcf.update(frame); kcf_age += 1
-                    else:
-                        kb = tracker.last_bbox   # 같은 프레임 → 직전 보간 박스 재사용
-                    if kb is not None:
-                        tracker.last_bbox = kb
-                        draw_bbox = kb; interp = True
+                    draw_bbox, interp, kcf_age = interp_step(
+                        kcf, tracker, frame, new_frame, kcf_age)
                 else:
                     kcf.deinit()
             # [기능 3] 인식률 % 터미널 로그 (임계값 튜닝 근거)
@@ -1248,13 +1272,8 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
                     reid=round(detail["reid"], 3) if detail is not None else None,
                     color=round(detail["color"], 3) if detail is not None else None)
         elif interp_alive:
-            if new_frame:
-                kb = kcf.update(frame); kcf_age += 1
-            else:
-                kb = tracker.last_bbox   # 같은 프레임 → 직전 보간 박스 재사용
-            if kb is not None:
-                tracker.last_bbox = kb
-                draw_bbox = kb; interp = True
+            draw_bbox, interp, kcf_age = interp_step(
+                kcf, tracker, frame, new_frame, kcf_age)
 
         if draw_bbox is not None:
             last_seen_t = time.time()   # 등록자 확인 → 유실 탐색 대기 타이머 갱신
@@ -1313,8 +1332,9 @@ def run_tracking(cam, yolo, reid, face, profile, use_face=True, follower=None,
                     v, w = 0.0, 0.0
                     follower.reset_search()
                 else:                            # 완전 유실 → 좌우 탐색 회전 (sh 방식)
-                    # 소프트 매치(후보 스코어 0.63↑): 회전 멈추고 confirm 기회 부여
-                    if fresh and det["best_total"] > 0.63 and det["best_bbox"] is not None:
+                    # 소프트 매치(후보 스코어 SOFT_MATCH_THR↑): 회전 멈추고 confirm 기회 부여
+                    if (fresh and det["best_total"] > SOFT_MATCH_THR
+                            and det["best_bbox"] is not None):
                         v, w = 0.0, 0.0
                         follower.reset_search()
                     elif time.time() - last_seen_t < SEARCH_START_DELAY:
@@ -1548,8 +1568,7 @@ def main() -> int:
 
     try:
         run_tracking(cam, yolo, reid, face, profile,
-                     use_face=not args.no_face, follower=follower,
-                     just_registered=False)
+                     use_face=not args.no_face, follower=follower)
     except KeyboardInterrupt:
         print("\n[종료]")
     finally:
