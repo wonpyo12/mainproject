@@ -162,3 +162,51 @@ class TrackingSession:      # 흩어진 지역변수 20여 개를 상태로 묶�
 **Phase 1 → 검증 → Phase 2 → 검증 → Phase 3** 순서.
 
 시연이 임박했다면 **Phase 1까지만** 해도 문서 불일치·중복·매직넘버가 정리되어 충분히 효과가 있습니다. Phase 2·3은 여유 있을 때 진행을 권합니다.
+
+---
+
+## 8. 실행 결과 (2026-07-22 완료)
+
+세 단계 모두 완료했습니다. 되돌림 기준점으로 `pre-refactor-v5` 태그를 남겨 뒀습니다.
+
+| 단계 | 커밋 | 내용 |
+|---|---|---|
+| Phase 1 | `e5dae30` | 문서·이름 v5 통일, 죽은 코드(`just_registered`·미사용 import) 제거, 중복 보간 블록 → `interp_step()`, 매직넘버 4개 상수화 |
+| Phase 2 | `73d1436` | 1,589줄 단일 파일 → `follower/` 11개 모듈 + 진입점 210줄 |
+| Phase 3 | `5d9c470` | `run_tracking` 358줄 → `TrackingSession` 역할별 메서드 |
+
+### 최종 구조
+
+```
+ros_person_follower_nav2_v5.py  210줄   진입점(인자 파싱·초기화)
+follower/config.py              101줄   튜닝 상수
+        util.py                  16줄   clamp · 쿼터니언 변환
+        debug_log.py             50줄   DBG 싱글톤
+        camera.py                95줄   MJPEG 수신
+        notify.py                55줄   음성 · LED
+        profile.py               62줄   프로필 · 특징 집계
+        detection.py            145줄   MOSSE · 스코어링 · 검출 워커
+        registration.py         167줄   등록 촬영
+        robot.py                371줄   주행 · Nav2 복귀
+        tracking.py             531줄   TrackingSession(추종 루프)
+        console.py               45줄   터미널 명령
+```
+
+### 검증 결과
+
+- 전 모듈 문법 OK, 미정의 이름 0개, import 스모크 통과
+- 원본 대비 **함수/클래스 유실 0**, **튜닝 상수 43개 값 전부 동일**
+- **동등성 시뮬레이션**: 리팩토링 전 코드와 같은 검출 시퀀스를 주입해 비교 →
+  진입(confirm 3연속) · 추적 · 유실(lost 16단계) · 재획득 전 구간에서
+  추적 상태 전이와 주행 명령 **1,840개 이벤트가 프레임 단위로 완전 일치**
+
+### 남은 확인 (실기 필요)
+
+시뮬레이션은 로직 동등성까지만 보장합니다. **실제 로봇으로 한 번은 확인**해 주세요:
+
+1. 앱 QR → 촬영 등록 → 추종 시작
+2. 유실 → 재획득 → 복귀
+3. VM은 hgfs 캐시 때문에 옛 파일이 실행될 수 있으므로, 첫 실행 전
+   `rm -rf /mnt/hgfs/mainproject/OpenCV_2/v2/__pycache__ .../follower/__pycache__`
+
+문제가 생기면 되돌리기: `git revert 5d9c470`(3단계만) 또는 `git reset --hard pre-refactor-v5`(전체).
